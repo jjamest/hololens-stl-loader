@@ -1,34 +1,51 @@
-# hololens-stl-loader
+# HoloLens STL Loader
 
-An Electron application with React and TypeScript
+A cross-platform desktop application built with Electron, React, and TypeScript for loading and visualizing STL files on HoloLens devices.
 
-## Recommended IDE Setup
+## Prerequisites
 
-- [VSCode](https://code.visualstudio.com/) + [ESLint](https://marketplace.visualstudio.com/items?itemName=dbaeumer.vscode-eslint) + [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode)
+- Node.js (version 16 or higher)
+- npm package manager
 
-## Project Setup
+## Development Environment
 
-### Install
+**Recommended IDE:** Visual Studio Code with the following extensions:
+- ESLint
+- Prettier
 
-```bash
-$ npm install
-```
-
-### Development
-
-```bash
-$ npm run dev
-```
-
-### Build
+## Installation
 
 ```bash
-# For windows
-$ npm run build:win
-
-# For macOS
-$ npm run build:mac
-
-# For Linux
-$ npm run build:linux
+npm install
 ```
+
+## Usage
+
+### Development Mode
+
+```bash
+npm run dev
+```
+
+### Production Build
+
+```bash
+# Windows
+npm run build:win
+
+# macOS
+npm run build:mac
+
+# Linux
+npm run build:linux
+```
+
+## Technology Stack
+
+- **Frontend:** React with TypeScript
+- **Desktop Framework:** Electron
+- **Build System:** Vite
+
+## License
+
+This project is proprietary software.
