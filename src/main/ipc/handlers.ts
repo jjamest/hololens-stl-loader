@@ -56,7 +56,7 @@ export const setupIpcHandlers = (): void => {
     const dialogOptions = {
       properties: ['openFile'] as 'openFile'[],
       filters: [
-        { name: 'STL Files', extensions: ['stl'] },
+        { name: 'STL Files', extensions: ['stl', 'obj'] },
         { name: 'All Files', extensions: ['*'] }
       ]
     }
