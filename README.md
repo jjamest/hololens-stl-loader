@@ -12,8 +12,7 @@ HoloLens STL Loader streamlines the process of working with STL files on Microso
 
 ## Features
 
-- **STL File Loading**: Import and parse STL files
-- **3D Visualization**: Real-time preview of 3D models
+- **Model File Loading**: Import and parse OBJ/STL files
 - **HoloLens Integration**: Deploy models to HoloLens devices
 - **Cross-Platform**: Support for Windows, macOS, and Linux
 - **Modern UI**: React-based interface with TypeScript
@@ -46,7 +45,6 @@ HoloLens STL Loader streamlines the process of working with STL files on Microso
 - **React**: User interface library
 - **TypeScript**: Type-safe JavaScript
 - **Vite**: Build tool and development server
-- **Three.js**: 3D graphics rendering
 
 ## License
 
