@@ -1,10 +1,10 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 :root {
   --color-background: #242424;
   --color-text: #e2e8f0;
+  padding-right: 3rem;
 }
-
 
 ul {
   list-style: none;

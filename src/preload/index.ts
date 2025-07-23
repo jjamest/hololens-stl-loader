@@ -9,21 +9,20 @@ interface ConsoleLogData {
   source: 'main' | 'renderer'
 }
 
-interface CopyResult {
-  success: boolean
-  destinationPath?: string
-  message?: string
-  error?: string
-}
-
 // Custom APIs for renderer
 const api = {
   // File operations
-  selectStlFile: (): Promise<string | null> => ipcRenderer.invoke('select-stl-file'),
+  selectStlFile: (): Promise<string | null> => ipcRenderer.invoke('select-model-files'),
   selectUnityProject: (): Promise<string | null> => ipcRenderer.invoke('select-unity-project'),
-  copyStlToUnity: (stlFilePath: string, unityProjectPath: string): Promise<CopyResult> =>
-    ipcRenderer.invoke('copy-stl-to-unity', stlFilePath, unityProjectPath),
-  convertStlToObj: (stlFilePath: string) => ipcRenderer.invoke('convert-stl-to-obj', stlFilePath),
+  selectDICOMFolder: (): Promise<string | null> => ipcRenderer.invoke('select-dicom-folder'),
+
+  // Import operation
+  importToUnity: (
+    selectedFiles: string[],
+    selectedDicomFolder: string,
+    unityProjectPath: string
+  ): Promise<{ success: boolean; destinationPath?: string; message?: string; error?: string }[]> =>
+    ipcRenderer.invoke('import-to-unity', selectedFiles, selectedDicomFolder, unityProjectPath),
 
   // Console logging
   onConsoleLog: (callback: (logData: ConsoleLogData) => void): void => {

@@ -31,7 +31,11 @@ class ConsoleLogger {
     this.setupMainProcessLogging()
   }
 
-  private sendLogToRenderer(level: LogData['level'], message: string, source: LogData['source'] = 'main'): void {
+  private sendLogToRenderer(
+    level: LogData['level'],
+    message: string,
+    source: LogData['source'] = 'main'
+  ): void {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       const logData: LogData = {
         level,
@@ -75,4 +79,4 @@ class ConsoleLogger {
   }
 }
 
-export const consoleLogger = new ConsoleLogger() 
+export const consoleLogger = new ConsoleLogger()

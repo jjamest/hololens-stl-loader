@@ -1,5 +1,5 @@
-appId: com.electron.app
-productName: hololens-stl-loader
+appId: com.inova.holovision
+productName: holovision-preprocesser
 directories:
   buildResources: build
 files:
@@ -12,7 +12,7 @@ files:
 asarUnpack:
   - resources/**
 win:
-  executableName: hololens-stl-loader
+  executableName: holovision-preprocesser
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}

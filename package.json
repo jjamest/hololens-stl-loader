@@ -1,5 +1,5 @@
 {
-  "name": "hololens-stl-loader",
+  "name": "holovision-preprocesser",
   "version": "1.0.0",
   "description": "An Electron application with React and TypeScript",
   "main": "./out/main/index.js",
@@ -24,15 +24,21 @@
     "@electron-toolkit/preload": "^3.0.1",
     "@electron-toolkit/utils": "^4.0.0",
     "@tailwindcss/vite": "^4.1.11",
-    "tailwindcss": "^4.1.11"
+    "dicom-parser": "^1.8.21",
+    "pngjs": "^7.0.0",
+    "tailwindcss": "^4.1.11",
+    "three": "^0.178.0",
+    "three-stdlib": "^2.36.0"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",
     "@electron-toolkit/eslint-config-ts": "^3.0.0",
     "@electron-toolkit/tsconfig": "^1.0.1",
     "@types/node": "^22.14.1",
+    "@types/pngjs": "^6.0.5",
     "@types/react": "^19.1.1",
     "@types/react-dom": "^19.1.2",
+    "@types/three": "^0.178.1",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^35.1.5",
     "electron-builder": "^25.1.8",
@@ -46,5 +52,17 @@
     "react-dom": "^19.1.0",
     "typescript": "^5.8.3",
     "vite": "^6.2.6"
+  },
+  "build": {
+    "appId": "com.inova.holovision",
+    "mac": {
+      "target": "dmg",
+      "identity": null
+    },
+    "files": [
+      "dist",
+      "out",
+      "package.json"
+    ]
   }
 }

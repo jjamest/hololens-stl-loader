@@ -1,55 +1,52 @@
 # HoloLens STL Loader
 
-A cross-platform desktop application built with Electron, React, and TypeScript for loading and visualizing STL files on HoloLens devices.
+A cross-platform desktop application for loading, visualizing, and deploying STL files to Microsoft HoloLens devices.
 
-<img width="1856" height="1009" alt="Screenshot 2025-07-10 at 2 52 28 PM" src="https://github.com/user-attachments/assets/33db681e-3f3c-4eb9-bab8-2ce5e7dc50b6" />
-<img width="1859" height="997" alt="Screenshot 2025-07-10 at 2 53 16 PM" src="https://github.com/user-attachments/assets/21bbbb84-d6bf-4d1b-bb01-0ea89b7a1597" />
+![Application Interface](https://i.ibb.co/YFnppFRG/Screenshot-2025-07-23-at-5-31-25-PM.png)
+![File Visualization](https://i.ibb.co/Hpn7G4ML/Screenshot-2025-07-23-at-5-31-16-PM.png)
 
+## Overview
 
-## Prerequisites
+HoloLens STL Loader streamlines the process of working with STL files on Microsoft HoloLens devices. Built with Electron, React, and TypeScript, it provides an intuitive interface for 3D model visualization and deployment to mixed reality environments.
 
-- Node.js (version 16 or higher)
-- npm package manager
+## Features
 
-## Development Environment
+- **STL File Loading**: Import and parse STL files
+- **3D Visualization**: Real-time preview of 3D models
+- **HoloLens Integration**: Deploy models to HoloLens devices
+- **Cross-Platform**: Support for Windows, macOS, and Linux
+- **Modern UI**: React-based interface with TypeScript
 
-**Recommended IDE:** Visual Studio Code with the following extensions:
-- ESLint
-- Prettier
+## Requirements
+
+- **Operating System**: Windows 10+, macOS 10.14+, or Ubuntu 18.04+
+- **Node.js**: Version 16.0.0 or higher
+- **HoloLens**: Microsoft HoloLens with Windows Device Portal enabled
 
 ## Installation
 
-```bash
-npm install
-```
+1. Clone the repository
+2. Install dependencies: `npm install`
+3. Start development server: `npm run dev`
 
-## Usage
+## Available Commands
 
-### Development Mode
-
-```bash
-npm run dev
-```
-
-### Production Build
-
-```bash
-# Windows
-npm run build:win
-
-# macOS
-npm run build:mac
-
-# Linux
-npm run build:linux
-```
+| Command               | Description               |
+| --------------------- | ------------------------- |
+| `npm run dev`         | Start development server  |
+| `npm run build`       | Build for production      |
+| `npm run build:win`   | Create Windows executable |
+| `npm run build:mac`   | Create macOS application  |
+| `npm run build:linux` | Create Linux AppImage     |
 
 ## Technology Stack
 
-- **Frontend:** React with TypeScript
-- **Desktop Framework:** Electron
-- **Build System:** Vite
+- **Electron**: Desktop application framework
+- **React**: User interface library
+- **TypeScript**: Type-safe JavaScript
+- **Vite**: Build tool and development server
+- **Three.js**: 3D graphics rendering
 
 ## License
 
-This project is proprietary software.
+This project is proprietary software. All rights reserved.

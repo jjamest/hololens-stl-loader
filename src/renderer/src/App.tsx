@@ -1,11 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
-
-interface CopyResult {
-  success: boolean
-  destinationPath?: string
-  message?: string
-  error?: string
-}
+import SelectModels from './pages/SelectModels'
+import SelectProject from './pages/SelectProject'
+import Review from './pages/Review'
+import ProgressBar from './components/ProgressBar'
+import Button from './components/Button'
 
 interface ConsoleLogData {
   timestamp: number
@@ -27,22 +25,32 @@ declare global {
     api: {
       selectStlFile: () => Promise<string[]>
       selectUnityProject: () => Promise<string | null>
-      copyStlToUnity: (stlFiles: string[], unityPath: string) => Promise<CopyResult[]>
+      selectDICOMFolder: () => Promise<string | null>
+      importToUnity: (
+        selectedFiles: string[],
+        selectedDicomFolder: string,
+        unityProjectPath: string
+      ) => Promise<
+        { success: boolean; destinationPath?: string; message?: string; error?: string }[]
+      >
       onConsoleLog?: (callback: (data: ConsoleLogData) => void) => void
       removeConsoleLogListeners?: () => void
-      convertStlToObj: (stlFilePath: string) => Promise<string>
     }
   }
 }
 
 function App(): React.JSX.Element {
   const [selectedFiles, setSelectedFiles] = useState<string[]>([])
+  const [selectedDicomFolder, setSelectedDicomFolder] = useState<string>('')
   const [unityProjectPath, setUnityProjectPath] = useState<string>('')
   const [status, setStatus] = useState<string>('')
   const [isExecuting, setIsExecuting] = useState<boolean>(false)
   const [consoleLogs, setConsoleLogs] = useState<ConsoleLog[]>([])
+  const [currentStep, setCurrentStep] = useState<number>(0)
   const consoleEndRef = useRef<HTMLDivElement>(null)
   const logIdRef = useRef(0)
+
+  const steps = ['Select Models', 'Select Project', 'Review & Import']
 
   // Add console log helper
   const addConsoleLog = (
@@ -72,7 +80,7 @@ function App(): React.JSX.Element {
       return
     }
 
-    const handler = (logData: ConsoleLogData) => {
+    const handler = (logData: ConsoleLogData): void => {
       const newLog: ConsoleLog = {
         id: logIdRef.current++,
         timestamp: new Date(logData.timestamp).toLocaleTimeString(),
@@ -98,6 +106,19 @@ function App(): React.JSX.Element {
   const clearConsole = (): void => {
     setConsoleLogs([])
     addConsoleLog('info', 'Console cleared')
+  }
+
+  // Step navigation functions
+  const goToNextStep = (): void => {
+    if (currentStep < steps.length - 1) {
+      setCurrentStep(currentStep + 1)
+    }
+  }
+
+  const goToPreviousStep = (): void => {
+    if (currentStep > 0) {
+      setCurrentStep(currentStep - 1)
+    }
   }
 
   const handleSelectStl = async (): Promise<void> => {
@@ -134,18 +155,38 @@ function App(): React.JSX.Element {
     }
   }
 
+  const handleSelectDicomFolder = async (): Promise<void> => {
+    try {
+      if (!window.api?.selectDICOMFolder) {
+        throw new Error('DICOM folder selection API not available')
+      }
+      const folderPath = await window.api.selectDICOMFolder()
+      if (folderPath) {
+        addConsoleLog('log', `Selected DICOM folder: ${folderPath}`)
+        setSelectedDicomFolder(folderPath)
+        clearMessages()
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      addConsoleLog('error', `Error selecting DICOM folder: ${errorMessage}`)
+    }
+  }
+
   const handleImport = async (): Promise<void> => {
-    if (!window.api?.copyStlToUnity || !window.api?.convertStlToObj) {
-      addConsoleLog('error', 'Import or conversion API not available')
+    if (!window.api?.importToUnity) {
+      addConsoleLog('error', 'Import API not available')
       return
     }
 
-    if (!selectedFiles.length || !unityProjectPath) {
-      const missingItems: string[] = []
-      if (!selectedFiles.length) missingItems.push('STL files')
-      if (!unityProjectPath) missingItems.push('Unity project directory')
+    if (!selectedFiles.length && !selectedDicomFolder) {
+      const errorMsg = 'Please select files or DICOM folder before importing.'
+      setStatus(errorMsg)
+      addConsoleLog('error', errorMsg)
+      return
+    }
 
-      const errorMsg = `Please select ${missingItems.join(' and ')} before importing.`
+    if (!unityProjectPath) {
+      const errorMsg = 'Please select Unity project directory before importing.'
       setStatus(errorMsg)
       addConsoleLog('error', errorMsg)
       return
@@ -155,46 +196,32 @@ function App(): React.JSX.Element {
     setIsExecuting(true)
 
     try {
-      const processedFiles: string[] = []
+      addConsoleLog(
+        'log',
+        `Starting import of ${selectedFiles.length} files and ${selectedDicomFolder ? '1 DICOM folder' : 'no DICOM folders'}...`
+      )
 
-      // Process each file
-      for (const filePath of selectedFiles) {
-        const fileExtension = filePath.toLowerCase().split('.').pop()
-        
-        if (fileExtension === 'stl') {
-          addConsoleLog('info', `Converting STL file: ${filePath}`)
-          try {
-            const objFilePath = await window.api.convertStlToObj(filePath)
-            processedFiles.push(objFilePath)
-            addConsoleLog('info', `Successfully converted to OBJ: ${objFilePath}`)
-          } catch (convError) {
-            addConsoleLog('error', `Failed to convert STL file: ${filePath}`)
-            continue
-          }
-        } else if (fileExtension === 'obj') {
-          processedFiles.push(filePath)
-        } else {
-          addConsoleLog('warn', `Skipping unsupported file: ${filePath}`)
-          continue
-        }
-      }
-
-      if (processedFiles.length === 0) {
-        throw new Error('No valid files to import')
-      }
-
-      addConsoleLog('log', `Starting import of ${processedFiles.length} files...`)
-      const results = await window.api.copyStlToUnity(processedFiles, unityProjectPath)
+      const results = await window.api.importToUnity(
+        selectedFiles,
+        selectedDicomFolder,
+        unityProjectPath
+      )
       const successCount = results.filter((r) => r.success).length
 
-      setStatus(`Imported ${successCount} of ${results.length} files successfully`)
-      addConsoleLog('log', `Import completed: ${successCount} successful, ${results.length - successCount} failed`)
+      setStatus(`Imported ${successCount} of ${results.length} items successfully`)
+      addConsoleLog(
+        'log',
+        `Import completed: ${successCount} successful, ${results.length - successCount} failed`
+      )
 
       results.forEach((result) => {
         if (result.success) {
-          addConsoleLog('info', `Successfully imported: ${result.destinationPath}`)
+          addConsoleLog(
+            'info',
+            result.message || `Successfully imported: ${result.destinationPath}`
+          )
         } else {
-          addConsoleLog('error', `Failed to import: ${result.error}`)
+          addConsoleLog('error', result.error || 'Failed to import item')
         }
       })
     } catch (error) {
@@ -205,7 +232,7 @@ function App(): React.JSX.Element {
       setIsExecuting(false)
       addConsoleLog('log', 'Import process finished')
     }
-  }   
+  }
   const getLogLevelColor = (level: ConsoleLog['level']): string => {
     const colors = {
       error: 'text-red-400',
@@ -224,77 +251,80 @@ function App(): React.JSX.Element {
     return source === 'main' ? 'text-green-400' : 'text-blue-400'
   }
 
+  // Render current step component
+  const renderCurrentStep = (): React.JSX.Element => {
+    switch (currentStep) {
+      case 0:
+        return (
+          <SelectModels
+            selectedFiles={selectedFiles}
+            selectedDicomFolder={selectedDicomFolder}
+            onSelectFiles={handleSelectStl}
+            onSelectDicomFolder={handleSelectDicomFolder}
+            onNext={goToNextStep}
+          />
+        )
+      case 1:
+        return (
+          <SelectProject
+            unityProjectPath={unityProjectPath}
+            onSelectProject={handleSelectUnityProject}
+            onNext={goToNextStep}
+            onBack={goToPreviousStep}
+          />
+        )
+      case 2:
+        return (
+          <Review
+            selectedFiles={selectedFiles}
+            selectedDicomFolder={selectedDicomFolder}
+            unityProjectPath={unityProjectPath}
+            status={status}
+            isExecuting={isExecuting}
+            onImport={handleImport}
+            onBack={goToPreviousStep}
+          />
+        )
+      default:
+        return <div>Unknown step</div>
+    }
+  }
+
   return (
-    <div className="min-h-screen flex gap-8 p-8">
-      {/* Left side - Main controls */}
-      <div className="flex-1 flex items-center justify-center">
-        <div className="bg-gray-800 rounded-lg shadow-lg p-12 max-w-2xl w-full border border-gray-700">
-          <div className="actions flex flex-col items-center">
-            {/* STL Model Selection */}
-            <div className="flex flex-col items-center mb-12">
-              <button
-                className="w-80 text-center bg-black hover:bg-gray-900 text-white py-4 px-8 rounded text-lg font-medium transition-colors border border-gray-600 mb-2"
-                onClick={handleSelectStl}
-              >
-                Select STL Files
-              </button>
-              <span className="text-gray-400 text-sm">
-                {selectedFiles.length > 0 ? `${selectedFiles.length} files selected` : 'No files selected'}
-              </span>
-            </div>
-
-            {/* Unity Project Selection */}
-            <div className="flex flex-col items-center mb-12">
-              <button
-                className="w-80 text-center bg-black hover:bg-gray-900 text-white py-4 px-8 rounded text-lg font-medium transition-colors border border-gray-600 mb-2"
-                onClick={handleSelectUnityProject}
-              >
-                Select Unity Project
-              </button>
-              <span className="text-gray-400 text-sm">
-                {unityProjectPath || 'No Unity project selected'}
-              </span>
-            </div>
-
-            {/* Execute Button */}
-            <div className="flex flex-col items-center">
-              <button
-                className="w-80 text-center bg-black hover:bg-gray-900 text-white py-4 px-8 rounded text-lg font-medium transition-colors border border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={handleImport}
-                disabled={isExecuting}
-              >
-                {isExecuting ? 'Importing...' : 'Import Files'}
-              </button>
-
-              {/* Status Messages */}
-              {status && (
-                <div className="mt-4 text-green-400 text-sm text-center max-w-80">
-                  {status}
-                </div>
-              )}
-            </div>
+    <div className="h-screen flex gap-4 p-4 overflow-hidden">
+      {/* Left side - Current step component with progress bar */}
+      <div className="flex-shrink-0 flex items-center justify-center w-1/2">
+        <div className="bg-gray-800 rounded-lg shadow-lg p-8 max-w-lg w-full border border-gray-700">
+          {/* Progress Bar */}
+          <div className="mb-8">
+            <ProgressBar currentStep={currentStep} steps={steps} />
           </div>
+
+          {/* Current Step Content */}
+          <div className="flex flex-col items-center">{renderCurrentStep()}</div>
         </div>
       </div>
 
       {/* Right side - Console */}
-      <div className="flex-1 flex flex-col">
-        <div className="bg-gray-900 rounded-lg shadow-lg border border-gray-700 h-full flex flex-col">
+      <div className="flex-1 flex items-center justify-center">
+        <div className="bg-gray-900 rounded-lg shadow-lg border border-gray-700 h-80 w-full flex flex-col">
           {/* Console header */}
-          <div className="flex items-center justify-between p-4 border-b border-gray-700">
-            <h3 className="text-white font-medium">Console</h3>
-            <button
-              onClick={clearConsole}
-              className="text-gray-400 hover:text-white text-sm px-3 py-1 rounded border border-gray-600 hover:border-gray-500 transition-colors"
-            >
+          <div className="flex items-center justify-between p-4 border-b border-gray-700 flex-shrink-0">
+            <div>
+              <h3 className="text-white font-medium">Console</h3>
+              <div className="text-xs text-gray-500 mt-1">
+                [M] Main Process • [R] Renderer Process
+              </div>
+            </div>
+            <Button variant="secondary" size="sm" onClick={clearConsole}>
               Clear
-            </button>
+            </Button>
           </div>
 
           {/* Console content */}
-          <div className="flex-1 p-4 overflow-y-auto font-mono text-sm">
+          <div className="flex-1 pl-2 pr-6 py-4 overflow-y-auto font-mono text-sm min-h-0">
             {consoleLogs.length === 0 ? (
-              <div className="text-gray-500 italic">No console output yet...</div>
+              <div className="text-gray-500 pl-2 italic">No console output yet...</div>
             ) : (
               consoleLogs.map((log) => (
                 <div key={log.id} className="mb-1 flex items-start">

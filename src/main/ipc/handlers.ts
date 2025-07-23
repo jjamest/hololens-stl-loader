@@ -1,66 +1,162 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
-import { promises as fs } from 'fs'
-import path from 'path'
-import { exec } from 'child_process'
-import { promisify } from 'util'
+import * as fs from 'fs/promises'
+import * as path from 'path'
+import { STLLoader } from 'three-stdlib'
+import { BufferGeometry } from 'three'
+import * as dicomParser from 'dicom-parser'
+import { PNG } from 'pngjs'
 
-const execAsync = promisify(exec)
+// Function to convert STL file to OBJ format
+const convertStlToObj = async (stlFilePath: string): Promise<string> => {
+  const loader = new STLLoader()
 
-interface CopyResult {
-  success: boolean
-  destinationPath?: string
-  message?: string
-  error?: string
+  // Read STL file
+  const stlData = await fs.readFile(stlFilePath)
+
+  // Parse STL geometry - convert Buffer to ArrayBuffer
+  const arrayBuffer = new ArrayBuffer(stlData.length)
+  const uint8Array = new Uint8Array(arrayBuffer)
+  uint8Array.set(stlData)
+  const geometry: BufferGeometry = loader.parse(arrayBuffer)
+
+  // Generate OBJ content
+  let objContent = '# Converted from STL\n'
+
+  // Add vertices
+  const positions = geometry.attributes.position.array
+  for (let i = 0; i < positions.length; i += 3) {
+    objContent += `v ${positions[i]} ${positions[i + 1]} ${positions[i + 2]}\n`
+  }
+
+  // Add normals if available
+  if (geometry.attributes.normal) {
+    const normals = geometry.attributes.normal.array
+    for (let i = 0; i < normals.length; i += 3) {
+      objContent += `vn ${normals[i]} ${normals[i + 1]} ${normals[i + 2]}\n`
+    }
+  }
+
+  // Add faces
+  const vertexCount = positions.length / 3
+  for (let i = 1; i <= vertexCount; i += 3) {
+    if (geometry.attributes.normal) {
+      objContent += `f ${i}//${i} ${i + 1}//${i + 1} ${i + 2}//${i + 2}\n`
+    } else {
+      objContent += `f ${i} ${i + 1} ${i + 2}\n`
+    }
+  }
+
+  // Create output file path
+  const objFilePath = stlFilePath.replace(/\.stl$/i, '.obj')
+
+  // Write OBJ file
+  await fs.writeFile(objFilePath, objContent, 'utf8')
+
+  return objFilePath
 }
 
-// Helper function to update ButtonUI.cs with new STL filename
-const updateButtonUIScript = async (
-  unityProjectPath: string,
-  newStlFileName: string
-): Promise<void> => {
-  const buttonUIPath = path.join(unityProjectPath, 'Assets', 'Scripts', 'ButtonUI.cs')
-
+// Function to convert DICOM file to PNG
+const convertDicomToPng = async (dicomFilePath: string): Promise<string> => {
   try {
-    // Check if ButtonUI.cs exists
-    await fs.access(buttonUIPath)
-    console.log('ButtonUI.cs found, updating STL reference...')
+    // Read DICOM file
+    const dicomData = await fs.readFile(dicomFilePath)
 
-    // Read the current content
-    const content = await fs.readFile(buttonUIPath, 'utf-8')
+    // Parse DICOM data
+    const dataSet = dicomParser.parseDicom(dicomData)
 
-    // Regular expression to find and replace the STL filename in the Path.Combine line
-    // This matches: Path.Combine(Application.dataPath, "Models", "any-filename.stl")
-    const stlPathRegex =
-      /(Path\.Combine\s*\(\s*Application\.dataPath\s*,\s*"Models"\s*,\s*")[^"]+\.stl("\s*\)\s*;)/g
-
-    // Replace with the new filename
-    const updatedContent = content.replace(stlPathRegex, `$1${newStlFileName}$2`)
-
-    // Check if any replacement was made
-    if (content !== updatedContent) {
-      // Write the updated content back
-      await fs.writeFile(buttonUIPath, updatedContent, 'utf-8')
-      console.log(`Successfully updated ButtonUI.cs with new STL file: ${newStlFileName}`)
-    } else {
-      console.log('No STL path found in ButtonUI.cs to update')
+    // Extract pixel data
+    const pixelDataElement = dataSet.elements.x7fe00010
+    if (!pixelDataElement) {
+      throw new Error('No pixel data found in DICOM file')
     }
+
+    // Get image dimensions
+    const rows = dataSet.uint16('x00280010') || 512 // Default to 512 if not found
+    const columns = dataSet.uint16('x00280011') || 512 // Default to 512 if not found
+    const bitsAllocated = dataSet.uint16('x00280100') || 16
+
+    // Extract pixel data
+    let pixelData: Uint16Array | Uint8Array
+    if (bitsAllocated === 16) {
+      pixelData = new Uint16Array(
+        dicomData.buffer,
+        pixelDataElement.dataOffset,
+        pixelDataElement.length / 2
+      )
+    } else {
+      pixelData = new Uint8Array(
+        dicomData.buffer,
+        pixelDataElement.dataOffset,
+        pixelDataElement.length
+      )
+    }
+
+    // Create PNG
+    const png = new PNG({ width: columns, height: rows })
+
+    // Find min and max values for proper scaling
+    let minValue = Infinity
+    let maxValue = -Infinity
+
+    for (let i = 0; i < pixelData.length; i++) {
+      const value = pixelData[i]
+      if (value < minValue) minValue = value
+      if (value > maxValue) maxValue = value
+    }
+
+    const valueRange = maxValue - minValue
+
+    // Convert pixel data to PNG format (8-bit RGBA)
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < columns; x++) {
+        const idx = (rows * y + x) << 2
+        const pixelIdx = y * columns + x
+
+        let pixelValue: number
+        const rawValue = pixelData[pixelIdx] || 0
+
+        // Normalize to 0-255 range
+        if (valueRange > 0) {
+          pixelValue = Math.round(((rawValue - minValue) / valueRange) * 255)
+        } else {
+          pixelValue = 128 // Default gray if all values are the same
+        }
+
+        // Clamp to valid range
+        pixelValue = Math.max(0, Math.min(255, pixelValue))
+
+        // Set RGB values (grayscale)
+        png.data[idx] = pixelValue // Red
+        png.data[idx + 1] = pixelValue // Green
+        png.data[idx + 2] = pixelValue // Blue
+        png.data[idx + 3] = 255 // Alpha
+      }
+    }
+
+    // Create output file path
+    const pngFilePath = dicomFilePath.replace(/\.dcm$/i, '.png')
+
+    // Write PNG file
+    const buffer = PNG.sync.write(png)
+    await fs.writeFile(pngFilePath, buffer)
+
+    console.log(
+      `Converted DICOM to PNG: ${path.basename(dicomFilePath)} -> ${path.basename(pngFilePath)}`
+    )
+    return pngFilePath
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
-      console.log('ButtonUI.cs not found, skipping script update')
-    } else {
-      console.error('Error updating ButtonUI.cs:', error)
-      throw error
-    }
+    console.error(`Failed to convert DICOM file ${dicomFilePath}:`, error)
+    throw error
   }
 }
 
 export const setupIpcHandlers = (): void => {
   // File selection handlers
-  ipcMain.handle('select-stl-file', async () => {
+  ipcMain.handle('select-model-files', async () => {
     const dialogOptions = {
       properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[],
       filters: [
-        { name: 'STL Files', extensions: ['stl', 'obj'] },
+        { name: '3D Files', extensions: ['stl', 'obj'] },
         { name: 'All Files', extensions: ['*'] }
       ]
     }
@@ -70,7 +166,34 @@ export const setupIpcHandlers = (): void => {
       ? await dialog.showOpenDialog(focusedWindow, dialogOptions)
       : await dialog.showOpenDialog(dialogOptions)
 
-    return result.canceled ? null : result.filePaths
+    if (result.canceled || !result.filePaths) {
+      return null
+    }
+
+    const processedFiles: string[] = []
+
+    for (const filePath of result.filePaths) {
+      const ext = path.extname(filePath).toLowerCase()
+
+      if (ext === '.stl') {
+        // Convert STL to OBJ
+        console.log('Detected STL file, automatically converting to OBJ')
+
+        try {
+          const objFilePath = await convertStlToObj(filePath)
+          processedFiles.push(objFilePath)
+        } catch (error) {
+          console.error(`Failed to convert STL file ${filePath}:`, error)
+          // Still include the original STL file if conversion fails
+          processedFiles.push(filePath)
+        }
+      } else {
+        // Keep non-STL files as is
+        processedFiles.push(filePath)
+      }
+    }
+
+    return processedFiles
   })
 
   ipcMain.handle('select-unity-project', async () => {
@@ -86,107 +209,158 @@ export const setupIpcHandlers = (): void => {
     return result.canceled ? null : result.filePaths[0] || null
   })
 
-  // STL copy handler
-  ipcMain.handle(
-    'copy-stl-to-unity',
-    async (_, stlFilePaths: string[], unityProjectPath: string): Promise<CopyResult[]> => {
-      try {
-        if (!stlFilePaths?.length || !unityProjectPath) {
-          throw new Error('Both STL file paths and Unity project path are required')
+  ipcMain.handle('select-dicom-folder', async () => {
+    const dialogOptions = {
+      properties: ['openDirectory'] as 'openDirectory'[]
+    }
+
+    const focusedWindow = BrowserWindow.getFocusedWindow()
+    const result = focusedWindow
+      ? await dialog.showOpenDialog(focusedWindow, dialogOptions)
+      : await dialog.showOpenDialog(dialogOptions)
+
+    if (result.canceled || !result.filePaths[0]) {
+      return null
+    }
+
+    const selectedFolder = result.filePaths[0]
+
+    try {
+      // Find all .dcm files in the selected folder
+      const files = await fs.readdir(selectedFolder, { withFileTypes: true })
+      const dicomFiles = files
+        .filter((file) => file.isFile() && file.name.toLowerCase().endsWith('.dcm'))
+        .map((file) => path.join(selectedFolder, file.name))
+
+      console.log(`Found ${dicomFiles.length} DICOM files to convert`)
+
+      // Convert each DICOM file to PNG
+      const convertedFiles: string[] = []
+      for (const dicomFile of dicomFiles) {
+        try {
+          const pngFile = await convertDicomToPng(dicomFile)
+          convertedFiles.push(pngFile)
+        } catch (error) {
+          console.error(`Failed to convert ${path.basename(dicomFile)}:`, error)
+          // Continue with other files even if one fails
         }
+      }
 
-        const results: CopyResult[] = []
-        const assetsFolder = path.join(unityProjectPath, 'Assets', 'Resources')
-        const modelsFolder = path.join(assetsFolder, 'Models')
+      console.log(
+        `Successfully converted ${convertedFiles.length} out of ${dicomFiles.length} DICOM files`
+      )
+      return selectedFolder
+    } catch (error) {
+      console.error('Error processing DICOM folder:', error)
+      return selectedFolder // Return the folder path even if conversion fails
+    }
+  })
 
-        console.log('Target Assets folder:', assetsFolder)
-        console.log('Target Models folder:', modelsFolder)
+  // Import files to Unity project
+  ipcMain.handle(
+    'import-to-unity',
+    async (_, selectedFiles: string[], selectedDicomFolder: string, unityProjectPath: string) => {
+      const results: {
+        success: boolean
+        destinationPath?: string
+        message?: string
+        error?: string
+      }[] = []
 
-        // Create directory structure
-        await fs.mkdir(modelsFolder, { recursive: true })
+      try {
+        // Create Resources folder structure
+        const resourcesPath = path.join(unityProjectPath, 'Assets', 'Resources')
+        const modelsPath = path.join(resourcesPath, 'Models')
+        const dicomPath = path.join(resourcesPath, 'DICOM')
 
-        for (const filePath of stlFilePaths) {
+        await fs.mkdir(resourcesPath, { recursive: true })
+        await fs.mkdir(modelsPath, { recursive: true })
+        await fs.mkdir(dicomPath, { recursive: true })
+
+        // Copy selected files to Models folder
+        for (const filePath of selectedFiles) {
           try {
-            console.log('Processing file:', filePath)
-            await fs.access(filePath)
+            const fileName = path.basename(filePath)
+            const destinationPath = path.join(modelsPath, fileName)
 
-            const fileExt = path.extname(filePath).toLowerCase()
-            let destinationPath = ''
-            let fileName = ''
-            let objFilePath: string | undefined
-
-            if (fileExt === '.stl') {
-              // Convert STL to OBJ
-              console.log('Converting STL to OBJ...')
-              objFilePath = await convertStlToObj(filePath)
-              if (!objFilePath) {
-                throw new Error('OBJ file path is undefined after conversion')
-              }
-              fileName = path.basename(objFilePath)
-              destinationPath = path.join(modelsFolder, fileName)
-            } else if (fileExt === '.obj') {
-              fileName = path.basename(filePath)
-              destinationPath = path.join(modelsFolder, fileName)
-            } else {
-              throw new Error(`Unsupported file type: ${fileExt}`)
-            }
-
-            // Copy the file (either original OBJ or converted OBJ)
-            await fs.copyFile(fileExt === '.stl' && objFilePath ? objFilePath : filePath, destinationPath)
-            await fs.access(destinationPath)
-
-            try {
-              await updateButtonUIScript(unityProjectPath, fileName)
-            } catch (updateError) {
-              console.warn('Warning: Could not update ButtonUI.cs:', updateError)
-            }
+            await fs.copyFile(filePath, destinationPath)
 
             results.push({
               success: true,
               destinationPath,
-              message: `File copied successfully to ${destinationPath}`
+              message: `Successfully copied ${fileName}`
             })
+
+            console.log(`Copied file: ${fileName} to ${destinationPath}`)
           } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error'
             results.push({
               success: false,
-              error: error instanceof Error ? error.message : 'Unknown error occurred'
+              error: `Failed to copy ${path.basename(filePath)}: ${errorMessage}`
             })
+            console.error(`Failed to copy file ${filePath}:`, error)
+          }
+        }
+
+        // Copy DICOM folder if selected - but only PNG files
+        if (selectedDicomFolder) {
+          try {
+            const folderName = path.basename(selectedDicomFolder)
+            const destinationPath = path.join(dicomPath, folderName)
+
+            // Copy only PNG files from DICOM folder
+            await copyPngFilesFromFolder(selectedDicomFolder, destinationPath)
+
+            results.push({
+              success: true,
+              destinationPath,
+              message: `Successfully copied PNG files from DICOM folder ${folderName}`
+            })
+
+            console.log(`Copied PNG files from DICOM folder: ${folderName} to ${destinationPath}`)
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+            results.push({
+              success: false,
+              error: `Failed to copy DICOM folder: ${errorMessage}`
+            })
+            console.error(`Failed to copy DICOM folder ${selectedDicomFolder}:`, error)
           }
         }
 
         return results
       } catch (error) {
-        return [{
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error occurred'
-        }]
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+        console.error('Error during import:', error)
+        return [
+          {
+            success: false,
+            error: `Import failed: ${errorMessage}`
+          }
+        ]
       }
     }
   )
+}
 
-  // Helper function for STL to OBJ conversion
-  const convertStlToObj = async (stlFilePath: string): Promise<string> => {
-    try {
-      // Create output path for OBJ file
-      const objFilePath = stlFilePath.replace(/\.stl$/i, '.obj')
-      
-      // Use a command-line tool like assimp for conversion
-      // You'll need to have assimp installed on the system
-      const { stderr } = await execAsync(
-        `assimp export "${stlFilePath}" "${objFilePath}"`
-      )
+// Helper function to copy only PNG files from DICOM folder
+async function copyPngFilesFromFolder(source: string, destination: string): Promise<void> {
+  await fs.mkdir(destination, { recursive: true })
 
-      if (stderr) {
-        console.error('Conversion warning:', stderr)
-      }
+  const entries = await fs.readdir(source, { withFileTypes: true })
 
-      // Verify the output file exists
-      await fs.access(objFilePath)
-      
-      return objFilePath
-    } catch (error) {
-      console.error('Error converting STL to OBJ:', error)
-      throw error
+  for (const entry of entries) {
+    const sourcePath = path.join(source, entry.name)
+    const destinationPath = path.join(destination, entry.name)
+
+    if (entry.isDirectory()) {
+      // Recursively process subdirectories
+      await copyPngFilesFromFolder(sourcePath, destinationPath)
+    } else if (entry.name.toLowerCase().endsWith('.png')) {
+      // Only copy PNG files (converted DICOM files)
+      await fs.copyFile(sourcePath, destinationPath)
+      console.log(`Copied PNG file: ${entry.name}`)
     }
+    // Skip .dcm files and other non-PNG files
   }
 }
