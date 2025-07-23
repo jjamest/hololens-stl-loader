@@ -1,4 +1,4 @@
-# HoloLens STL Loader
+# HoloVision Preprocesser
 
 A cross-platform desktop application for loading, visualizing, and deploying STL files to Microsoft HoloLens devices.
 
