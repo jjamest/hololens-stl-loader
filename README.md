@@ -2,8 +2,9 @@
 
 A cross-platform desktop application for loading, visualizing, and deploying STL files to Microsoft HoloLens devices.
 
-![Application Interface](https://i.ibb.co/YFnppFRG/Screenshot-2025-07-23-at-5-31-25-PM.png)
-![File Visualization](https://i.ibb.co/Hpn7G4ML/Screenshot-2025-07-23-at-5-31-16-PM.png)
+<img width="1489" height="893" alt="First Page" src="https://github.com/user-attachments/assets/fbce1380-5deb-4d44-93cb-748f69b5c532" />
+<img width="1497" height="889" alt="Second Page" src="https://github.com/user-attachments/assets/4c261f9b-54a5-46d4-8c04-0e88570a0b80" />
+
 
 ## Overview
 
