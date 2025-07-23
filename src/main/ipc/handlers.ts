@@ -1,6 +1,10 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { promises as fs } from 'fs'
 import path from 'path'
+import { exec } from 'child_process'
+import { promisify } from 'util'
+
+const execAsync = promisify(exec)
 
 interface CopyResult {
   success: boolean
@@ -54,7 +58,7 @@ export const setupIpcHandlers = (): void => {
   // File selection handlers
   ipcMain.handle('select-stl-file', async () => {
     const dialogOptions = {
-      properties: ['openFile'] as 'openFile'[],
+      properties: ['openFile', 'multiSelections'] as ('openFile' | 'multiSelections')[],
       filters: [
         { name: 'STL Files', extensions: ['stl', 'obj'] },
         { name: 'All Files', extensions: ['*'] }
@@ -66,7 +70,7 @@ export const setupIpcHandlers = (): void => {
       ? await dialog.showOpenDialog(focusedWindow, dialogOptions)
       : await dialog.showOpenDialog(dialogOptions)
 
-    return result.canceled ? null : result.filePaths[0] || null
+    return result.canceled ? null : result.filePaths
   })
 
   ipcMain.handle('select-unity-project', async () => {
@@ -85,22 +89,14 @@ export const setupIpcHandlers = (): void => {
   // STL copy handler
   ipcMain.handle(
     'copy-stl-to-unity',
-    async (_, stlFilePath: string, unityProjectPath: string): Promise<CopyResult> => {
+    async (_, stlFilePaths: string[], unityProjectPath: string): Promise<CopyResult[]> => {
       try {
-        if (!stlFilePath || !unityProjectPath) {
-          throw new Error('Both STL file path and Unity project path are required')
+        if (!stlFilePaths?.length || !unityProjectPath) {
+          throw new Error('Both STL file paths and Unity project path are required')
         }
 
-        console.log('Copy operation starting...')
-        console.log('STL file path:', stlFilePath)
-        console.log('Unity project path:', unityProjectPath)
-
-        // Verify STL file exists
-        await fs.access(stlFilePath)
-        console.log('STL file exists and is accessible')
-
-        // Setup destination paths
-        const assetsFolder = path.join(unityProjectPath, 'Assets')
+        const results: CopyResult[] = []
+        const assetsFolder = path.join(unityProjectPath, 'Assets', 'Resources')
         const modelsFolder = path.join(assetsFolder, 'Models')
 
         console.log('Target Assets folder:', assetsFolder)
@@ -108,43 +104,89 @@ export const setupIpcHandlers = (): void => {
 
         // Create directory structure
         await fs.mkdir(modelsFolder, { recursive: true })
-        console.log('Directory structure ensured')
 
-        // Copy file
-        const fileName = path.basename(stlFilePath)
-        const destinationPath = path.join(modelsFolder, fileName)
+        for (const filePath of stlFilePaths) {
+          try {
+            console.log('Processing file:', filePath)
+            await fs.access(filePath)
 
-        console.log('Copying from:', stlFilePath)
-        console.log('Copying to:', destinationPath)
+            const fileExt = path.extname(filePath).toLowerCase()
+            let destinationPath = ''
+            let fileName = ''
+            let objFilePath: string | undefined
 
-        await fs.copyFile(stlFilePath, destinationPath)
-        console.log('File copied successfully!')
+            if (fileExt === '.stl') {
+              // Convert STL to OBJ
+              console.log('Converting STL to OBJ...')
+              objFilePath = await convertStlToObj(filePath)
+              if (!objFilePath) {
+                throw new Error('OBJ file path is undefined after conversion')
+              }
+              fileName = path.basename(objFilePath)
+              destinationPath = path.join(modelsFolder, fileName)
+            } else if (fileExt === '.obj') {
+              fileName = path.basename(filePath)
+              destinationPath = path.join(modelsFolder, fileName)
+            } else {
+              throw new Error(`Unsupported file type: ${fileExt}`)
+            }
 
-        // Verify copy
-        await fs.access(destinationPath)
-        console.log('Copy verified: File exists at destination')
+            // Copy the file (either original OBJ or converted OBJ)
+            await fs.copyFile(fileExt === '.stl' && objFilePath ? objFilePath : filePath, destinationPath)
+            await fs.access(destinationPath)
 
-        // Update ButtonUI.cs script with new STL filename
-        try {
-          await updateButtonUIScript(unityProjectPath, fileName)
-          console.log('ButtonUI.cs update completed')
-        } catch (updateError) {
-          console.warn('Warning: Could not update ButtonUI.cs:', updateError)
-          // Don't fail the entire operation if script update fails
+            try {
+              await updateButtonUIScript(unityProjectPath, fileName)
+            } catch (updateError) {
+              console.warn('Warning: Could not update ButtonUI.cs:', updateError)
+            }
+
+            results.push({
+              success: true,
+              destinationPath,
+              message: `File copied successfully to ${destinationPath}`
+            })
+          } catch (error) {
+            results.push({
+              success: false,
+              error: error instanceof Error ? error.message : 'Unknown error occurred'
+            })
+          }
         }
 
-        return {
-          success: true,
-          destinationPath,
-          message: `STL file copied successfully to ${destinationPath} and ButtonUI.cs updated`
-        }
+        return results
       } catch (error) {
-        console.error('Error copying STL file:', error)
-        return {
+        return [{
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error occurred'
-        }
+        }]
       }
     }
   )
+
+  // Helper function for STL to OBJ conversion
+  const convertStlToObj = async (stlFilePath: string): Promise<string> => {
+    try {
+      // Create output path for OBJ file
+      const objFilePath = stlFilePath.replace(/\.stl$/i, '.obj')
+      
+      // Use a command-line tool like assimp for conversion
+      // You'll need to have assimp installed on the system
+      const { stderr } = await execAsync(
+        `assimp export "${stlFilePath}" "${objFilePath}"`
+      )
+
+      if (stderr) {
+        console.error('Conversion warning:', stderr)
+      }
+
+      // Verify the output file exists
+      await fs.access(objFilePath)
+      
+      return objFilePath
+    } catch (error) {
+      console.error('Error converting STL to OBJ:', error)
+      throw error
+    }
+  }
 }

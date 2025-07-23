@@ -8,7 +8,13 @@ interface ConsoleLogData {
   source: 'main' | 'renderer'
 }
 
-interface CopyResult {
+export interface IElectronAPI {
+  selectStlFile: () => Promise<string[] | null>
+  selectUnityProject: () => Promise<string | null>
+  copyStlToUnity: (stlFilePaths: string[], unityProjectPath: string) => Promise<CopyResult[]>
+}
+
+export interface CopyResult {
   success: boolean
   destinationPath?: string
   message?: string

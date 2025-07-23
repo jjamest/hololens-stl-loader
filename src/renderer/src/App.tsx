@@ -1,5 +1,19 @@
 import { useState, useEffect, useRef } from 'react'
 
+interface CopyResult {
+  success: boolean
+  destinationPath?: string
+  message?: string
+  error?: string
+}
+
+interface ConsoleLogData {
+  timestamp: number
+  level: ConsoleLog['level']
+  message: string
+  source: ConsoleLog['source']
+}
+
 interface ConsoleLog {
   id: number
   timestamp: string
@@ -8,11 +22,23 @@ interface ConsoleLog {
   source: 'main' | 'renderer'
 }
 
+declare global {
+  interface Window {
+    api: {
+      selectStlFile: () => Promise<string[]>
+      selectUnityProject: () => Promise<string | null>
+      copyStlToUnity: (stlFiles: string[], unityPath: string) => Promise<CopyResult[]>
+      onConsoleLog?: (callback: (data: ConsoleLogData) => void) => void
+      removeConsoleLogListeners?: () => void
+      convertStlToObj: (stlFilePath: string) => Promise<string>
+    }
+  }
+}
+
 function App(): React.JSX.Element {
-  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
-  const [selectedUnityProjectPath, setSelectedUnityProjectPath] = useState<string | null>(null)
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [successMessage, setSuccessMessage] = useState<string | null>(null)
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([])
+  const [unityProjectPath, setUnityProjectPath] = useState<string>('')
+  const [status, setStatus] = useState<string>('')
   const [isExecuting, setIsExecuting] = useState<boolean>(false)
   const [consoleLogs, setConsoleLogs] = useState<ConsoleLog[]>([])
   const consoleEndRef = useRef<HTMLDivElement>(null)
@@ -36,27 +62,29 @@ function App(): React.JSX.Element {
 
   // Clear any existing messages helper
   const clearMessages = (): void => {
-    setErrorMessage(null)
-    setSuccessMessage(null)
+    setStatus('')
   }
 
   // Setup console logging
   useEffect(() => {
-    // Listen for console messages from main process
-    if (window.api?.onConsoleLog) {
-      window.api.onConsoleLog((logData) => {
-        const newLog: ConsoleLog = {
-          id: logIdRef.current++,
-          timestamp: new Date(logData.timestamp).toLocaleTimeString(),
-          level: logData.level,
-          message: logData.message,
-          source: logData.source
-        }
-        setConsoleLogs((prev) => [...prev, newLog])
-      })
+    if (!window.api?.onConsoleLog) {
+      console.warn('Console logging API not available')
+      return
     }
 
-    // Cleanup function
+    const handler = (logData: ConsoleLogData) => {
+      const newLog: ConsoleLog = {
+        id: logIdRef.current++,
+        timestamp: new Date(logData.timestamp).toLocaleTimeString(),
+        level: logData.level,
+        message: logData.message,
+        source: logData.source
+      }
+      setConsoleLogs((prev) => [...prev, newLog])
+    }
+
+    window.api.onConsoleLog(handler)
+
     return () => {
       window.api?.removeConsoleLogListeners?.()
     }
@@ -72,41 +100,53 @@ function App(): React.JSX.Element {
     addConsoleLog('info', 'Console cleared')
   }
 
-  const handleSelectFile = async (): Promise<void> => {
+  const handleSelectStl = async (): Promise<void> => {
     try {
       if (!window.api?.selectStlFile) {
-        addConsoleLog('error', 'API not available')
-        return
+        throw new Error('File selection API not available')
       }
-      const filePath = await window.api.selectStlFile()
-      addConsoleLog('log', `Selected file path: ${filePath}`)
-      setSelectedFilePath(filePath)
-      clearMessages()
+      const files = await window.api.selectStlFile()
+      if (files?.length) {
+        addConsoleLog('log', `Selected files: ${files.join(', ')}`)
+        setSelectedFiles(files)
+        clearMessages()
+      }
     } catch (error) {
-      addConsoleLog('error', `Error selecting file: ${error}`)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      addConsoleLog('error', `Error selecting files: ${errorMessage}`)
     }
   }
 
   const handleSelectUnityProject = async (): Promise<void> => {
     try {
-      const filePath = await window.api.selectUnityProject()
-      addConsoleLog('log', `Selected Unity project path: ${filePath}`)
-      setSelectedUnityProjectPath(filePath)
-      clearMessages()
+      if (!window.api?.selectUnityProject) {
+        throw new Error('Unity project selection API not available')
+      }
+      const projectPath = await window.api.selectUnityProject()
+      if (projectPath) {
+        addConsoleLog('log', `Selected Unity project path: ${projectPath}`)
+        setUnityProjectPath(projectPath)
+        clearMessages()
+      }
     } catch (error) {
-      addConsoleLog('error', `Error selecting Unity project: ${error}`)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      addConsoleLog('error', `Error selecting Unity project: ${errorMessage}`)
     }
   }
 
-  const handleExecute = async (): Promise<void> => {
-    // Validation
-    if (!selectedFilePath || !selectedUnityProjectPath) {
-      const missingItems: string[] = []
-      if (!selectedFilePath) missingItems.push('STL model')
-      if (!selectedUnityProjectPath) missingItems.push('Unity project')
+  const handleImport = async (): Promise<void> => {
+    if (!window.api?.copyStlToUnity || !window.api?.convertStlToObj) {
+      addConsoleLog('error', 'Import or conversion API not available')
+      return
+    }
 
-      const errorMsg = `Please select ${missingItems.join(' and ')} before executing.`
-      setErrorMessage(errorMsg)
+    if (!selectedFiles.length || !unityProjectPath) {
+      const missingItems: string[] = []
+      if (!selectedFiles.length) missingItems.push('STL files')
+      if (!unityProjectPath) missingItems.push('Unity project directory')
+
+      const errorMsg = `Please select ${missingItems.join(' and ')} before importing.`
+      setStatus(errorMsg)
       addConsoleLog('error', errorMsg)
       return
     }
@@ -115,33 +155,57 @@ function App(): React.JSX.Element {
     setIsExecuting(true)
 
     try {
-      addConsoleLog(
-        'log',
-        `Starting execution... STL: ${selectedFilePath}, Unity: ${selectedUnityProjectPath}`
-      )
+      const processedFiles: string[] = []
 
-      const result = await window.api.copyStlToUnity(selectedFilePath, selectedUnityProjectPath)
-
-      if (result.success) {
-        setSuccessMessage(result.message || 'STL file successfully imported into Unity project!')
-        addConsoleLog('log', `File copied to: ${result.destinationPath}`)
-      } else {
-        setErrorMessage(result.error || 'Failed to import STL file into Unity project.')
-        addConsoleLog('error', `Copy failed: ${result.error}`)
+      // Process each file
+      for (const filePath of selectedFiles) {
+        const fileExtension = filePath.toLowerCase().split('.').pop()
+        
+        if (fileExtension === 'stl') {
+          addConsoleLog('info', `Converting STL file: ${filePath}`)
+          try {
+            const objFilePath = await window.api.convertStlToObj(filePath)
+            processedFiles.push(objFilePath)
+            addConsoleLog('info', `Successfully converted to OBJ: ${objFilePath}`)
+          } catch (convError) {
+            addConsoleLog('error', `Failed to convert STL file: ${filePath}`)
+            continue
+          }
+        } else if (fileExtension === 'obj') {
+          processedFiles.push(filePath)
+        } else {
+          addConsoleLog('warn', `Skipping unsupported file: ${filePath}`)
+          continue
+        }
       }
+
+      if (processedFiles.length === 0) {
+        throw new Error('No valid files to import')
+      }
+
+      addConsoleLog('log', `Starting import of ${processedFiles.length} files...`)
+      const results = await window.api.copyStlToUnity(processedFiles, unityProjectPath)
+      const successCount = results.filter((r) => r.success).length
+
+      setStatus(`Imported ${successCount} of ${results.length} files successfully`)
+      addConsoleLog('log', `Import completed: ${successCount} successful, ${results.length - successCount} failed`)
+
+      results.forEach((result) => {
+        if (result.success) {
+          addConsoleLog('info', `Successfully imported: ${result.destinationPath}`)
+        } else {
+          addConsoleLog('error', `Failed to import: ${result.error}`)
+        }
+      })
     } catch (error) {
-      addConsoleLog('error', `Error during execution: ${error}`)
-      setErrorMessage('An unexpected error occurred while importing the STL file.')
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      addConsoleLog('error', `Error during import: ${errorMessage}`)
+      setStatus('An unexpected error occurred while importing the files.')
     } finally {
       setIsExecuting(false)
-      addConsoleLog('log', 'Execution completed')
+      addConsoleLog('log', 'Import process finished')
     }
-  }
-
-  const getDisplayText = (path: string | null, fallback: string): string => {
-    return path || fallback
-  }
-
+  }   
   const getLogLevelColor = (level: ConsoleLog['level']): string => {
     const colors = {
       error: 'text-red-400',
@@ -170,12 +234,12 @@ function App(): React.JSX.Element {
             <div className="flex flex-col items-center mb-12">
               <button
                 className="w-80 text-center bg-black hover:bg-gray-900 text-white py-4 px-8 rounded text-lg font-medium transition-colors border border-gray-600 mb-2"
-                onClick={handleSelectFile}
+                onClick={handleSelectStl}
               >
-                Select STL Model
+                Select STL Files
               </button>
               <span className="text-gray-400 text-sm">
-                {getDisplayText(selectedFilePath, 'No model selected')}
+                {selectedFiles.length > 0 ? `${selectedFiles.length} files selected` : 'No files selected'}
               </span>
             </div>
 
@@ -188,7 +252,7 @@ function App(): React.JSX.Element {
                 Select Unity Project
               </button>
               <span className="text-gray-400 text-sm">
-                {getDisplayText(selectedUnityProjectPath, 'No Unity project selected')}
+                {unityProjectPath || 'No Unity project selected'}
               </span>
             </div>
 
@@ -196,19 +260,16 @@ function App(): React.JSX.Element {
             <div className="flex flex-col items-center">
               <button
                 className="w-80 text-center bg-black hover:bg-gray-900 text-white py-4 px-8 rounded text-lg font-medium transition-colors border border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                onClick={handleExecute}
+                onClick={handleImport}
                 disabled={isExecuting}
               >
-                {isExecuting ? 'Importing...' : 'Execute'}
+                {isExecuting ? 'Importing...' : 'Import Files'}
               </button>
 
               {/* Status Messages */}
-              {errorMessage && (
-                <div className="mt-4 text-red-400 text-sm text-center max-w-80">{errorMessage}</div>
-              )}
-              {successMessage && (
+              {status && (
                 <div className="mt-4 text-green-400 text-sm text-center max-w-80">
-                  {successMessage}
+                  {status}
                 </div>
               )}
             </div>
