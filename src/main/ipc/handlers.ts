@@ -260,13 +260,13 @@ export const setupIpcHandlers = (): void => {
       const files = await fs.readdir(selectedFolder, { withFileTypes: true })
       const dicomFiles: string[] = []
 
-      // Assume all files in the selected folder are DICOM/CT scan files
+      // First pass: Add .dcm extension to files without extensions
       for (const file of files) {
         if (file.isFile()) {
           const filePath = path.join(selectedFolder, file.name)
-
-          // Skip common non-DICOM files like text files, readme files, etc.
           const fileName = file.name.toLowerCase()
+
+          // Skip common non-DICOM files
           const skipExtensions = ['.txt', '.md', '.readme', '.log', '.json', '.xml', '.png']
           const shouldSkip =
             skipExtensions.some((ext) => fileName.endsWith(ext)) ||
@@ -274,11 +274,45 @@ export const setupIpcHandlers = (): void => {
             fileName === 'dicomdir' ||
             fileName.startsWith('.')
 
-          if (!shouldSkip) {
+          if (!shouldSkip && !path.extname(file.name)) {
+            // File has no extension, add .dcm extension
+            const newFilePath = filePath + '.dcm'
+            try {
+              await fs.rename(filePath, newFilePath)
+              console.log(`Renamed file: ${file.name} -> ${file.name}.dcm`)
+            } catch (error) {
+              console.error(`Failed to rename ${file.name}:`, error)
+            }
+          }
+        }
+      }
+
+      // Second pass: Read directory again and process files with DICOM detection
+      const updatedFiles = await fs.readdir(selectedFolder, { withFileTypes: true })
+
+      for (const file of updatedFiles) {
+        if (file.isFile()) {
+          const filePath = path.join(selectedFolder, file.name)
+
+          // First check by extension (fast check)
+          if (file.name.toLowerCase().endsWith('.dcm')) {
             dicomFiles.push(filePath)
-            console.log(`Added file as DICOM: ${file.name}`)
           } else {
-            console.log(`Skipping non-DICOM file: ${file.name}`)
+            // Check if file is DICOM by examining its content
+            try {
+              const fileBuffer = await fs.readFile(filePath)
+              // DICOM files start with a 128-byte preamble followed by "DICM" magic number
+              if (fileBuffer.length > 132) {
+                const dicmSignature = fileBuffer.subarray(128, 132).toString('ascii')
+                if (dicmSignature === 'DICM') {
+                  dicomFiles.push(filePath)
+                  console.log(`Detected DICOM file without .dcm extension: ${file.name}`)
+                }
+              }
+            } catch (error) {
+              // Skip files that can't be read
+              console.log(`Skipping file ${file.name}: ${error}`)
+            }
           }
         }
       }
