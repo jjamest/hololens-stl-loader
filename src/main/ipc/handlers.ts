@@ -445,7 +445,8 @@ export const setupIpcHandlers = (): void => {
         }
       }
 
-      // Find Unity executable - specifically look for version 2022.3.62f1
+      // Find Unity executable - try both Unity Hub and direct Unity paths
+      const unityHubPath = 'C:/Program Files/Unity/Hub/Unity Hub.exe'
       const specificUnityPath = 'C:/Program Files/Unity/Hub/Editor/2022.3.62f1/Editor/Unity.exe'
       const fallbackUnityPaths = [
         'C:/Program Files/Unity/Hub/Editor/*/Editor/Unity.exe',
@@ -454,51 +455,67 @@ export const setupIpcHandlers = (): void => {
       ]
 
       let unityExecutable = ''
+      let useUnityHub = false
 
-      // First, try to find the specific version
+      // First, check if Unity Hub is available (preferred method)
       try {
+        await fs.access(unityHubPath)
+        // Verify the specific Unity version exists for Hub
         await fs.access(specificUnityPath)
-        unityExecutable = specificUnityPath
-        console.log(`Found specific Unity version 2022.3.62f1: ${specificUnityPath}`)
+        unityExecutable = unityHubPath
+        useUnityHub = true
+        console.log(`Found Unity Hub: ${unityHubPath}`)
+        console.log(`Unity version 2022.3.62f1 available for Hub: ${specificUnityPath}`)
       } catch {
-        console.log('Unity version 2022.3.62f1 not found, searching for other versions...')
+        console.log(
+          'Unity Hub not found or Unity version not available, trying direct Unity executable...'
+        )
 
-        // Fall back to searching for any available version
-        for (const unityPath of fallbackUnityPaths) {
-          try {
-            // For paths with wildcards, we need to find the actual path
-            if (unityPath.includes('*')) {
-              const execAsync = promisify(exec)
+        // Fall back to direct Unity executable
+        try {
+          await fs.access(specificUnityPath)
+          unityExecutable = specificUnityPath
+          console.log(`Found specific Unity version 2022.3.62f1: ${specificUnityPath}`)
+        } catch {
+          console.log('Unity version 2022.3.62f1 not found, searching for other versions...')
 
-              try {
-                // Use Windows dir command to find Unity installations
-                const { stdout } = await execAsync(
-                  `dir "${unityPath.replace('*', '')}" /b /ad 2>nul`
-                )
-                const versions = stdout
-                  .trim()
-                  .split('\n')
-                  .filter((v) => v.trim())
+          // Fall back to searching for any available version
+          for (const unityPath of fallbackUnityPaths) {
+            try {
+              // For paths with wildcards, we need to find the actual path
+              if (unityPath.includes('*')) {
+                const execAsync = promisify(exec)
 
-                if (versions.length > 0) {
-                  // Try the first version found
-                  const versionPath = unityPath.replace('*', versions[0].trim())
-                  await fs.access(versionPath)
-                  unityExecutable = versionPath
-                  console.log(`Found fallback Unity version: ${versionPath}`)
-                  break
+                try {
+                  // Use Windows dir command to find Unity installations
+                  const { stdout } = await execAsync(
+                    `dir "${unityPath.replace('*', '')}" /b /ad 2>nul`
+                  )
+                  const versions = stdout
+                    .trim()
+                    .split('\n')
+                    .filter((v) => v.trim())
+
+                  if (versions.length > 0) {
+                    // Try the first version found
+                    const versionPath = unityPath.replace('*', versions[0].trim())
+                    await fs.access(versionPath)
+                    unityExecutable = versionPath
+                    console.log(`Found fallback Unity version: ${versionPath}`)
+                    break
+                  }
+                } catch {
+                  continue
                 }
-              } catch {
-                continue
+              } else {
+                await fs.access(unityPath)
+                unityExecutable = unityPath
+                console.log(`Found fallback Unity installation: ${unityPath}`)
+                break
               }
-            } else {
-              await fs.access(unityPath)
-              unityExecutable = unityPath
-              console.log(`Found fallback Unity installation: ${unityPath}`)
-              break
+            } catch {
+              continue
             }
-          } catch {
-            continue
           }
         }
       }
@@ -513,23 +530,44 @@ export const setupIpcHandlers = (): void => {
 
       console.log(`Using Unity executable: ${unityExecutable}`)
 
-      // Execute Unity build command
-      const buildArgs = [
-        '-batchmode',
-        '-quit',
-        '-projectPath',
-        unityProjectPath,
-        '-executeMethod',
-        'BuildScript.BuildUWP',
-        '-logFile',
-        path.join(unityProjectPath, 'build.log')
-      ]
+      // Execute Unity build command - different args for Unity Hub vs direct Unity
+      let buildArgs: string[]
 
-      console.log(`Executing Unity build with args: ${buildArgs.join(' ')}`)
+      if (useUnityHub) {
+        // Unity Hub command: Unity Hub.exe -- --projectPath "path" --executeMethod BuildScript.BuildUWP --batchmode --quit --logFile "path"
+        buildArgs = [
+          '--',
+          '--projectPath',
+          unityProjectPath,
+          '--executeMethod',
+          'BuildScript.BuildUWP',
+          '--batchmode',
+          '--quit',
+          '--logFile',
+          path.join(unityProjectPath, 'build.log')
+        ]
+        console.log(`Using Unity Hub with args: ${buildArgs.join(' ')}`)
+      } else {
+        // Direct Unity executable
+        buildArgs = [
+          '-batchmode',
+          '-quit',
+          '-projectPath',
+          unityProjectPath,
+          '-executeMethod',
+          'BuildScript.BuildUWP',
+          '-logFile',
+          path.join(unityProjectPath, 'build.log')
+        ]
+        console.log(`Using direct Unity executable with args: ${buildArgs.join(' ')}`)
+      }
 
       return new Promise((resolve) => {
+        console.log(`Starting Unity process...`)
+
         const unityProcess = spawn(unityExecutable, buildArgs, {
-          stdio: ['ignore', 'pipe', 'pipe']
+          stdio: ['ignore', 'pipe', 'pipe'],
+          shell: process.platform === 'win32'
         })
 
         let stdout = ''

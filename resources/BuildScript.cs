@@ -191,6 +191,23 @@ public class BuildScript
             Debug.Log("Running in batch mode");
         }
 
+        // Log detailed installation paths
+        string editorPath = EditorApplication.applicationPath;
+        string dataPath = Path.GetDirectoryName(editorPath) + "/Data";
+        string packageManagerPath = Path.Combine(dataPath, "Resources", "PackageManager", "Server", "UnityPackageManager.exe");
+
+        Debug.Log($"Unity Editor Path: {editorPath}");
+        Debug.Log($"Unity Data Path: {dataPath}");
+        Debug.Log($"Expected PackageManager Path: {packageManagerPath}");
+        Debug.Log($"PackageManager File Exists: {File.Exists(packageManagerPath)}");
+
+        if (!File.Exists(packageManagerPath))
+        {
+            Debug.LogWarning("UnityPackageManager.exe not found at expected location.");
+            Debug.LogWarning("This is normal when Unity works fine in UI but fails in batch mode.");
+            Debug.LogWarning("The Package Manager may be initialized differently in batch mode.");
+        }
+
         // Log platform settings
         Debug.Log($"Current Build Target: {EditorUserBuildSettings.activeBuildTarget}");
         Debug.Log($"Selected Build Target Group: {EditorUserBuildSettings.selectedBuildTargetGroup}");
@@ -212,7 +229,19 @@ public class BuildScript
         catch (System.Exception e)
         {
             Debug.LogWarning($"Package Manager may not be fully functional: {e.Message}");
-            Debug.LogWarning("This may indicate a corrupt Unity installation. Consider reinstalling Unity.");
+            Debug.LogWarning("This may indicate a corrupt Unity installation, but build may still work.");
+            Debug.LogWarning("If build fails, consider reinstalling Unity.");
+        }
+
+        // Force refresh asset database to ensure everything is loaded
+        try
+        {
+            AssetDatabase.Refresh();
+            Debug.Log("Asset database refreshed successfully");
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning($"Asset database refresh failed: {e.Message}");
         }
     }
 }
