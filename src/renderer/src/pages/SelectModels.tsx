@@ -75,7 +75,7 @@ const SelectModels: React.FC<SelectModelsProps> = ({
         disabled={selectedFiles.length === 0 && !selectedDicomFolder}
         className="w-64"
       >
-        Next: Select Project
+        Next: Review & Import
       </Button>
     </>
   )

@@ -40,7 +40,7 @@ class ConsoleLogger {
       const logData: LogData = {
         level,
         message,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date().toLocaleTimeString(),
         source
       }
       this.mainWindow.webContents.send('console-log', logData)

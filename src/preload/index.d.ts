@@ -9,9 +9,15 @@ interface ConsoleLogData {
 }
 
 export interface IElectronAPI {
-  selectStlFile: () => Promise<string[] | null>
+  selectModelFiles: () => Promise<string[] | null>
   selectUnityProject: () => Promise<string | null>
-  copyStlToUnity: (stlFilePaths: string[], unityProjectPath: string) => Promise<CopyResult[]>
+  selectDICOMFolder: () => Promise<string | null>
+  importToUnity: (
+    selectedFiles: string[],
+    selectedDicomFolder: string,
+    unityProjectPath: string
+  ) => Promise<CopyResult[]>
+  buildUnity: (unityProjectPath: string) => Promise<BuildResult>
 }
 
 export interface CopyResult {
@@ -21,14 +27,43 @@ export interface CopyResult {
   error?: string
 }
 
+export interface BuildResult {
+  success: boolean
+  buildPath?: string
+  message?: string
+  error?: string
+  log?: string
+  stdout?: string
+  stderr?: string
+}
+
 declare global {
   interface Window {
     electron: ElectronAPI
     api: {
       // File operations
-      selectStlFile: () => Promise<string | null>
+      selectModelFiles: () => Promise<string[] | null>
       selectUnityProject: () => Promise<string | null>
-      copyStlToUnity: (stlFilePath: string, unityProjectPath: string) => Promise<CopyResult>
+      selectDICOMFolder: () => Promise<string | null>
+
+      // Build script operations
+      checkBuildScript: (
+        unityProjectPath: string
+      ) => Promise<{ exists: boolean; path: string | null; error?: string }>
+
+      attachBuildScript: (
+        unityProjectPath: string
+      ) => Promise<{ success: boolean; path?: string; message?: string; error?: string }>
+
+      // Import operation
+      importToUnity: (
+        selectedFiles: string[],
+        selectedDicomFolder: string,
+        unityProjectPath: string
+      ) => Promise<CopyResult[]>
+
+      // Build operation
+      buildUnity: (unityProjectPath: string) => Promise<BuildResult>
 
       // Console logging
       onConsoleLog: (callback: (logData: ConsoleLogData) => void) => void

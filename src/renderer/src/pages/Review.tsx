@@ -8,7 +8,6 @@ interface ReviewProps {
   status: string
   isExecuting: boolean
   onImport: () => Promise<void>
-  onBack: () => void
 }
 
 const Review: React.FC<ReviewProps> = ({
@@ -17,8 +16,7 @@ const Review: React.FC<ReviewProps> = ({
   unityProjectPath,
   status,
   isExecuting,
-  onImport,
-  onBack
+  onImport
 }) => {
   return (
     <>
@@ -74,17 +72,6 @@ const Review: React.FC<ReviewProps> = ({
         {/* Status Messages */}
         {status && <div className="mt-4 text-green-400 text-sm text-center max-w-64">{status}</div>}
       </div>
-
-      {/* Back Button */}
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={onBack}
-        disabled={isExecuting}
-        className="w-64"
-      >
-        Back to Project Selection
-      </Button>
     </>
   )
 }

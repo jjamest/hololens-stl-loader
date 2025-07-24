@@ -1,6 +1,8 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron'
 import * as fs from 'fs/promises'
 import * as path from 'path'
+import { spawn, exec } from 'child_process'
+import { promisify } from 'util'
 import { STLLoader } from 'three-stdlib'
 import { BufferGeometry } from 'three'
 import * as dicomParser from 'dicom-parser'
@@ -150,6 +152,28 @@ const convertDicomToPng = async (dicomFilePath: string): Promise<string> => {
   }
 }
 
+// Helper function to copy only PNG files from DICOM folder
+async function copyPngFilesFromFolder(source: string, destination: string): Promise<void> {
+  await fs.mkdir(destination, { recursive: true })
+
+  const entries = await fs.readdir(source, { withFileTypes: true })
+
+  for (const entry of entries) {
+    const sourcePath = path.join(source, entry.name)
+    const destinationPath = path.join(destination, entry.name)
+
+    if (entry.isDirectory()) {
+      // Recursively process subdirectories
+      await copyPngFilesFromFolder(sourcePath, destinationPath)
+    } else if (entry.name.toLowerCase().endsWith('.png')) {
+      // Only copy PNG files (converted DICOM files)
+      await fs.copyFile(sourcePath, destinationPath)
+      console.log(`Copied PNG file: ${entry.name}`)
+    }
+    // Skip .dcm files and other non-PNG files
+  }
+}
+
 export const setupIpcHandlers = (): void => {
   // File selection handlers
   ipcMain.handle('select-model-files', async () => {
@@ -256,6 +280,59 @@ export const setupIpcHandlers = (): void => {
     }
   })
 
+  // Check if BuildScript.cs exists in Unity project
+  ipcMain.handle('check-build-script', async (_, unityProjectPath: string) => {
+    try {
+      const buildScriptPath = path.join(unityProjectPath, 'Assets', 'Editor', 'BuildScript.cs')
+
+      try {
+        await fs.access(buildScriptPath)
+        console.log(`Build script found at: ${buildScriptPath}`)
+        return { exists: true, path: buildScriptPath }
+      } catch {
+        console.log(`Build script not found at: ${buildScriptPath}`)
+        return { exists: false, path: buildScriptPath }
+      }
+    } catch (error) {
+      console.error('Error checking build script:', error)
+      return {
+        exists: false,
+        path: null,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  })
+
+  ipcMain.handle('attach-build-script', async (_, unityProjectPath: string) => {
+    try {
+      // Get the path to the BuildScript.cs in resources folder
+      const resourcesPath = path.join(__dirname, '..', '..', 'resources', 'BuildScript.cs')
+
+      // Create the destination path in Unity project
+      const editorPath = path.join(unityProjectPath, 'Assets', 'Editor')
+      const destinationPath = path.join(editorPath, 'BuildScript.cs')
+
+      // Create Editor folder if it doesn't exist
+      await fs.mkdir(editorPath, { recursive: true })
+
+      // Copy the BuildScript.cs file
+      await fs.copyFile(resourcesPath, destinationPath)
+
+      console.log(`Build script attached successfully: ${destinationPath}`)
+      return {
+        success: true,
+        path: destinationPath,
+        message: 'BuildScript.cs has been successfully attached to the Unity project'
+      }
+    } catch (error) {
+      console.error('Error attaching build script:', error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }
+    }
+  })
+
   // Import files to Unity project
   ipcMain.handle(
     'import-to-unity',
@@ -341,26 +418,189 @@ export const setupIpcHandlers = (): void => {
       }
     }
   )
-}
 
-// Helper function to copy only PNG files from DICOM folder
-async function copyPngFilesFromFolder(source: string, destination: string): Promise<void> {
-  await fs.mkdir(destination, { recursive: true })
+  ipcMain.handle('build-unity', async (_, unityProjectPath: string) => {
+    try {
+      console.log(`Starting Unity build for project: ${unityProjectPath}`)
 
-  const entries = await fs.readdir(source, { withFileTypes: true })
+      // Verify Unity project path exists
+      try {
+        await fs.access(unityProjectPath)
+      } catch {
+        return {
+          success: false,
+          error: 'Unity project path does not exist'
+        }
+      }
 
-  for (const entry of entries) {
-    const sourcePath = path.join(source, entry.name)
-    const destinationPath = path.join(destination, entry.name)
+      // Check if BuildScript.cs exists
+      const buildScriptPath = path.join(unityProjectPath, 'Assets', 'Editor', 'BuildScript.cs')
+      try {
+        await fs.access(buildScriptPath)
+      } catch {
+        return {
+          success: false,
+          error:
+            'BuildScript.cs not found in Assets/Editor folder. Please attach the build script first.'
+        }
+      }
 
-    if (entry.isDirectory()) {
-      // Recursively process subdirectories
-      await copyPngFilesFromFolder(sourcePath, destinationPath)
-    } else if (entry.name.toLowerCase().endsWith('.png')) {
-      // Only copy PNG files (converted DICOM files)
-      await fs.copyFile(sourcePath, destinationPath)
-      console.log(`Copied PNG file: ${entry.name}`)
+      // Find Unity executable - specifically look for version 2022.3.62f1
+      const specificUnityPath = 'C:/Program Files/Unity/Hub/Editor/2022.3.62f1/Editor/Unity.exe'
+      const fallbackUnityPaths = [
+        'C:/Program Files/Unity/Hub/Editor/*/Editor/Unity.exe',
+        'C:/Program Files/Unity/Editor/Unity.exe',
+        'C:/Program Files (x86)/Unity/Editor/Unity.exe'
+      ]
+
+      let unityExecutable = ''
+
+      // First, try to find the specific version
+      try {
+        await fs.access(specificUnityPath)
+        unityExecutable = specificUnityPath
+        console.log(`Found specific Unity version 2022.3.62f1: ${specificUnityPath}`)
+      } catch {
+        console.log('Unity version 2022.3.62f1 not found, searching for other versions...')
+
+        // Fall back to searching for any available version
+        for (const unityPath of fallbackUnityPaths) {
+          try {
+            // For paths with wildcards, we need to find the actual path
+            if (unityPath.includes('*')) {
+              const execAsync = promisify(exec)
+
+              try {
+                // Use Windows dir command to find Unity installations
+                const { stdout } = await execAsync(
+                  `dir "${unityPath.replace('*', '')}" /b /ad 2>nul`
+                )
+                const versions = stdout
+                  .trim()
+                  .split('\n')
+                  .filter((v) => v.trim())
+
+                if (versions.length > 0) {
+                  // Try the first version found
+                  const versionPath = unityPath.replace('*', versions[0].trim())
+                  await fs.access(versionPath)
+                  unityExecutable = versionPath
+                  console.log(`Found fallback Unity version: ${versionPath}`)
+                  break
+                }
+              } catch {
+                continue
+              }
+            } else {
+              await fs.access(unityPath)
+              unityExecutable = unityPath
+              console.log(`Found fallback Unity installation: ${unityPath}`)
+              break
+            }
+          } catch {
+            continue
+          }
+        }
+      }
+
+      if (!unityExecutable) {
+        return {
+          success: false,
+          error:
+            'Unity executable not found. Please ensure Unity 2022.3.62f1 is installed, or any other Unity version as fallback.'
+        }
+      }
+
+      console.log(`Using Unity executable: ${unityExecutable}`)
+
+      // Execute Unity build command
+      const buildArgs = [
+        '-batchmode',
+        '-quit',
+        '-projectPath',
+        unityProjectPath,
+        '-executeMethod',
+        'BuildScript.BuildUWP',
+        '-logFile',
+        path.join(unityProjectPath, 'build.log')
+      ]
+
+      console.log(`Executing Unity build with args: ${buildArgs.join(' ')}`)
+
+      return new Promise((resolve) => {
+        const unityProcess = spawn(unityExecutable, buildArgs, {
+          stdio: ['ignore', 'pipe', 'pipe']
+        })
+
+        let stdout = ''
+        let stderr = ''
+
+        unityProcess.stdout?.on('data', (data) => {
+          stdout += data.toString()
+          console.log(`Unity stdout: ${data}`)
+        })
+
+        unityProcess.stderr?.on('data', (data) => {
+          stderr += data.toString()
+          console.log(`Unity stderr: ${data}`)
+        })
+
+        unityProcess.on('close', async (code) => {
+          console.log(`Unity build process exited with code: ${code}`)
+
+          // Check if build folder was created
+          const buildPath = path.join(unityProjectPath, 'Build', 'UWP')
+          let buildExists = false
+          try {
+            await fs.access(buildPath)
+            buildExists = true
+          } catch {
+            buildExists = false
+          }
+
+          // Read build log if it exists
+          let buildLog = ''
+          try {
+            const logPath = path.join(unityProjectPath, 'build.log')
+            buildLog = await fs.readFile(logPath, 'utf8')
+          } catch {
+            buildLog = 'Build log not available'
+          }
+
+          if (code === 0 && buildExists) {
+            resolve({
+              success: true,
+              buildPath,
+              message: 'Unity build completed successfully',
+              log: buildLog,
+              stdout,
+              stderr: stderr || undefined
+            })
+          } else {
+            resolve({
+              success: false,
+              error: `Unity build failed with exit code: ${code}`,
+              log: buildLog,
+              stdout,
+              stderr
+            })
+          }
+        })
+
+        unityProcess.on('error', (error) => {
+          console.error('Unity build process error:', error)
+          resolve({
+            success: false,
+            error: `Failed to start Unity build process: ${error.message}`
+          })
+        })
+      })
+    } catch (error) {
+      console.error('Error during Unity build:', error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error during build'
+      }
     }
-    // Skip .dcm files and other non-PNG files
-  }
+  })
 }

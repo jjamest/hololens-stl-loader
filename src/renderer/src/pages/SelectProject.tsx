@@ -5,14 +5,12 @@ interface SelectProjectProps {
   unityProjectPath: string
   onSelectProject: () => Promise<void>
   onNext: () => void
-  onBack: () => void
 }
 
 const SelectProject: React.FC<SelectProjectProps> = ({
   unityProjectPath,
   onSelectProject,
-  onNext,
-  onBack
+  onNext
 }) => {
   return (
     <>
@@ -40,9 +38,6 @@ const SelectProject: React.FC<SelectProjectProps> = ({
 
       {/* Navigation Buttons */}
       <div className="flex gap-3 w-full">
-        <Button variant="secondary" size="md" onClick={onBack} className="flex-1">
-          Back
-        </Button>
         <Button
           variant="primary"
           size="md"
@@ -50,7 +45,7 @@ const SelectProject: React.FC<SelectProjectProps> = ({
           disabled={!unityProjectPath}
           className="flex-1"
         >
-          Next: Review
+          Next: Select Models
         </Button>
       </div>
     </>
