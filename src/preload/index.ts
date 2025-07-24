@@ -29,7 +29,7 @@ const api = {
 
   // Import operation
   importToUnity: (
-    selectedFiles: string[],
+    selectedFiles: { [buttonNum: number]: string } | string[],
     selectedDicomFolder: string,
     unityProjectPath: string
   ): Promise<{ success: boolean; destinationPath?: string; message?: string; error?: string }[]> =>
@@ -47,6 +47,14 @@ const api = {
     stdout?: string
     stderr?: string
   }> => ipcRenderer.invoke('build-unity', unityProjectPath),
+  cleanBuildFolder: (
+    unityProjectPath: string
+  ): Promise<{
+    success: boolean
+    message?: string
+    error?: string
+    deletedPath?: string
+  }> => ipcRenderer.invoke('clean-build-folder', unityProjectPath),
 
   // Console logging
   onConsoleLog: (callback: (logData: ConsoleLogData) => void): void => {

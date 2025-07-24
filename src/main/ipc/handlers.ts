@@ -250,11 +250,37 @@ export const setupIpcHandlers = (): void => {
     const selectedFolder = result.filePaths[0]
 
     try {
-      // Find all .dcm files in the selected folder
+      // Find all files in the selected folder and check for DICOM files
       const files = await fs.readdir(selectedFolder, { withFileTypes: true })
-      const dicomFiles = files
-        .filter((file) => file.isFile() && file.name.toLowerCase().endsWith('.dcm'))
-        .map((file) => path.join(selectedFolder, file.name))
+      const dicomFiles: string[] = []
+
+      // Check each file to see if it's a DICOM file
+      for (const file of files) {
+        if (file.isFile()) {
+          const filePath = path.join(selectedFolder, file.name)
+
+          // First check by extension (fast check)
+          if (file.name.toLowerCase().endsWith('.dcm')) {
+            dicomFiles.push(filePath)
+          } else {
+            // Check if file is DICOM by examining its content
+            try {
+              const fileBuffer = await fs.readFile(filePath)
+              // DICOM files start with a 128-byte preamble followed by "DICM" magic number
+              if (fileBuffer.length > 132) {
+                const dicmSignature = fileBuffer.subarray(128, 132).toString('ascii')
+                if (dicmSignature === 'DICM') {
+                  dicomFiles.push(filePath)
+                  console.log(`Detected DICOM file without .dcm extension: ${file.name}`)
+                }
+              }
+            } catch (error) {
+              // Skip files that can't be read
+              console.log(`Skipping file ${file.name}: ${error}`)
+            }
+          }
+        }
+      }
 
       console.log(`Found ${dicomFiles.length} DICOM files to convert`)
 
@@ -336,7 +362,16 @@ export const setupIpcHandlers = (): void => {
   // Import files to Unity project
   ipcMain.handle(
     'import-to-unity',
-    async (_, selectedFiles: string[], selectedDicomFolder: string, unityProjectPath: string) => {
+    async (
+      _,
+      selectedFiles: { [buttonNum: number]: string } | string[],
+      selectedDicomFolder: string,
+      unityProjectPath: string
+    ) => {
+      console.log('Received selectedFiles:', selectedFiles)
+      console.log('Type of selectedFiles:', typeof selectedFiles)
+      console.log('Is array?', Array.isArray(selectedFiles))
+
       const results: {
         success: boolean
         destinationPath?: string
@@ -354,18 +389,49 @@ export const setupIpcHandlers = (): void => {
         await fs.mkdir(modelsPath, { recursive: true })
         await fs.mkdir(dicomPath, { recursive: true })
 
-        // Copy selected files to Models folder
-        for (const filePath of selectedFiles) {
+        // Handle both old array format and new object format
+        let filesToProcess: { [buttonNum: number]: string } = {}
+
+        if (Array.isArray(selectedFiles)) {
+          // Convert old array format to new object format
+          // Map each file to buttons 1, 2, 3, 4 sequentially
+          selectedFiles.forEach((filePath, index) => {
+            const buttonNum = index + 1 // Start from Button1
+            if (buttonNum <= 4) {
+              // Only handle up to 4 buttons
+              filesToProcess[buttonNum] = filePath
+            }
+          })
+          console.log('Converted array to object:', filesToProcess)
+        } else {
+          // Use the object format directly
+          filesToProcess = selectedFiles
+        }
+
+        // Copy selected files to respective Button folders
+        for (const [buttonNumStr, filePath] of Object.entries(filesToProcess)) {
+          console.log('Processing buttonNumStr:', buttonNumStr, 'filePath:', filePath)
+          if (!filePath) continue // Skip if no file selected for this button
+
+          const buttonNum = parseInt(buttonNumStr, 10)
+          console.log('Parsed buttonNum:', buttonNum)
           try {
+            const buttonFolderName = `Button${buttonNum}`
+            console.log('Creating folder:', buttonFolderName)
+            const buttonFolderPath = path.join(modelsPath, buttonFolderName)
+
+            // Create button-specific folder
+            await fs.mkdir(buttonFolderPath, { recursive: true })
+
             const fileName = path.basename(filePath)
-            const destinationPath = path.join(modelsPath, fileName)
+            const destinationPath = path.join(buttonFolderPath, fileName)
 
             await fs.copyFile(filePath, destinationPath)
 
             results.push({
               success: true,
               destinationPath,
-              message: `Successfully copied ${fileName}`
+              message: `Successfully copied ${fileName} to ${buttonFolderName}`
             })
 
             console.log(`Copied file: ${fileName} to ${destinationPath}`)
@@ -373,9 +439,9 @@ export const setupIpcHandlers = (): void => {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error'
             results.push({
               success: false,
-              error: `Failed to copy ${path.basename(filePath)}: ${errorMessage}`
+              error: `Failed to copy ${path.basename(filePath)} to Button${buttonNum}: ${errorMessage}`
             })
-            console.error(`Failed to copy file ${filePath}:`, error)
+            console.error(`Failed to copy file ${filePath} to Button${buttonNum}:`, error)
           }
         }
 
@@ -638,6 +704,58 @@ export const setupIpcHandlers = (): void => {
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error during build'
+      }
+    }
+  })
+
+  ipcMain.handle('clean-build-folder', async (_, unityProjectPath: string) => {
+    try {
+      console.log(`Attempting to delete build folder for project: ${unityProjectPath}`)
+
+      // Verify Unity project path exists
+      try {
+        await fs.access(unityProjectPath)
+      } catch {
+        return {
+          success: false,
+          error: 'Unity project path does not exist'
+        }
+      }
+
+      // Check if build folder exists
+      const buildPath = path.join(unityProjectPath, 'Build')
+
+      try {
+        await fs.access(buildPath)
+        console.log(`Build folder found at: ${buildPath}`)
+
+        // Delete the build folder recursively
+        await fs.rm(buildPath, { recursive: true, force: true })
+
+        console.log(`Successfully deleted build folder: ${buildPath}`)
+        return {
+          success: true,
+          message: 'Build folder deleted successfully',
+          deletedPath: buildPath
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+          // Build folder doesn't exist
+          console.log(`Build folder does not exist at: ${buildPath}`)
+          return {
+            success: true,
+            message: 'Nothing to delete',
+            deletedPath: buildPath
+          }
+        } else {
+          throw error
+        }
+      }
+    } catch (error) {
+      console.error('Error deleting Unity build folder:', error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error during build folder deletion'
       }
     }
   })

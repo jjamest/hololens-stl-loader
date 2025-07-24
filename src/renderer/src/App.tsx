@@ -22,7 +22,7 @@ interface ConsoleLog {
 }
 
 function App(): React.JSX.Element {
-  const [selectedFiles, setSelectedFiles] = useState<string[]>([])
+  const [selectedFiles, setSelectedFiles] = useState<{ [buttonNum: number]: string }>({})
   const [selectedDicomFolder, setSelectedDicomFolder] = useState<string>('')
   const [unityProjectPath, setUnityProjectPath] = useState<string>('')
   const [status, setStatus] = useState<string>('')
@@ -138,20 +138,25 @@ function App(): React.JSX.Element {
     }
   }
 
-  const handleSelectStl = async (): Promise<void> => {
+  const handleSelectModelForButton = async (buttonNum: number): Promise<void> => {
     try {
       if (!window.api?.selectModelFiles) {
         throw new Error('File selection API not available')
       }
       const files = await window.api.selectModelFiles()
       if (files?.length) {
-        addConsoleLog('log', `Selected files: ${files.join(', ')}`)
-        setSelectedFiles(files)
+        // Take the first selected file for this button
+        const selectedFile = files[0]
+        addConsoleLog('log', `Selected file for Button ${buttonNum}: ${selectedFile}`)
+        setSelectedFiles((prev) => ({
+          ...prev,
+          [buttonNum]: selectedFile
+        }))
         clearMessages()
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      addConsoleLog('error', `Error selecting files: ${errorMessage}`)
+      addConsoleLog('error', `Error selecting file for Button ${buttonNum}: ${errorMessage}`)
     }
   }
 
@@ -189,13 +194,30 @@ function App(): React.JSX.Element {
     }
   }
 
+  const handleClearDicomFolder = (): void => {
+    setSelectedDicomFolder('')
+    addConsoleLog('log', 'DICOM folder selection cleared')
+    clearMessages()
+  }
+
+  const handleClearModelForButton = (buttonNum: number): void => {
+    setSelectedFiles((prev) => {
+      const newFiles = { ...prev }
+      delete newFiles[buttonNum]
+      return newFiles
+    })
+    addConsoleLog('log', `Cleared model selection for Button ${buttonNum}`)
+    clearMessages()
+  }
+
   const handleImport = async (): Promise<void> => {
     if (!window.api?.importToUnity) {
       addConsoleLog('error', 'Import API not available')
       return
     }
 
-    if (!selectedFiles.length && !selectedDicomFolder) {
+    const hasSelectedFiles = Object.keys(selectedFiles).length > 0
+    if (!hasSelectedFiles && !selectedDicomFolder) {
       const errorMsg = 'Please select files or DICOM folder before importing.'
       setStatus(errorMsg)
       addConsoleLog('error', errorMsg)
@@ -215,7 +237,7 @@ function App(): React.JSX.Element {
     try {
       addConsoleLog(
         'log',
-        `Starting import of ${selectedFiles.length} files and ${selectedDicomFolder ? '1 DICOM folder' : 'no DICOM folders'}...`
+        `Starting import of ${Object.keys(selectedFiles).length} files and ${selectedDicomFolder ? '1 DICOM folder' : 'no DICOM folders'}...`
       )
 
       const results = await window.api.importToUnity(
@@ -289,8 +311,10 @@ function App(): React.JSX.Element {
           <SelectModels
             selectedFiles={selectedFiles}
             selectedDicomFolder={selectedDicomFolder}
-            onSelectFiles={handleSelectStl}
+            onSelectModelForButton={handleSelectModelForButton}
+            onClearModelForButton={handleClearModelForButton}
             onSelectDicomFolder={handleSelectDicomFolder}
+            onClearDicomFolder={handleClearDicomFolder}
             onNext={goToNextStep}
           />
         )

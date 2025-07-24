@@ -144,7 +144,7 @@ function createWindow(): void {
 
 // App initialization
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.electron')
+  electronApp.setAppUserModelId('com.inova.holovision')
 
   setupIpcHandlers()
   createWindow()

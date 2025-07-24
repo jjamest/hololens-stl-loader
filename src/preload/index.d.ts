@@ -13,11 +13,12 @@ export interface IElectronAPI {
   selectUnityProject: () => Promise<string | null>
   selectDICOMFolder: () => Promise<string | null>
   importToUnity: (
-    selectedFiles: string[],
+    selectedFiles: { [buttonNum: number]: string } | string[],
     selectedDicomFolder: string,
     unityProjectPath: string
   ) => Promise<CopyResult[]>
   buildUnity: (unityProjectPath: string) => Promise<BuildResult>
+  cleanBuildFolder: (unityProjectPath: string) => Promise<void>
 }
 
 export interface CopyResult {
@@ -35,6 +36,13 @@ export interface BuildResult {
   log?: string
   stdout?: string
   stderr?: string
+}
+
+export interface CleanBuildResult {
+  success: boolean
+  message?: string
+  error?: string
+  deletedPath?: string
 }
 
 declare global {
@@ -57,13 +65,14 @@ declare global {
 
       // Import operation
       importToUnity: (
-        selectedFiles: string[],
+        selectedFiles: { [buttonNum: number]: string } | string[],
         selectedDicomFolder: string,
         unityProjectPath: string
       ) => Promise<CopyResult[]>
 
       // Build operation
       buildUnity: (unityProjectPath: string) => Promise<BuildResult>
+      cleanBuildFolder: (unityProjectPath: string) => Promise<CleanBuildResult>
 
       // Console logging
       onConsoleLog: (callback: (logData: ConsoleLogData) => void) => void
