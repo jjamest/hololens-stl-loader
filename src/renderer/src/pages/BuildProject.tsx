@@ -162,7 +162,11 @@ const BuildProject: React.FC<BuildProjectProps> = ({ unityProjectPath }) => {
   return (
     <>
       {showBuildSettings ? (
-        <BuildSettings onClose={handleCloseBuildSettings} onSave={handleSaveBuildSettings} />
+        <BuildSettings
+          onClose={handleCloseBuildSettings}
+          onSave={handleSaveBuildSettings}
+          unityProjectPath={unityProjectPath}
+        />
       ) : (
         <div className="w-full max-w-md mx-auto space-y-6">
           <div className="text-center">
@@ -201,7 +205,7 @@ const BuildProject: React.FC<BuildProjectProps> = ({ unityProjectPath }) => {
                 {isCheckingBuildScript
                   ? 'Checking...'
                   : buildScriptExists
-                    ? 'Reattach Build Script'
+                    ? 'Reset Build Script'
                     : 'Attach Build Script'}
               </Button>
 

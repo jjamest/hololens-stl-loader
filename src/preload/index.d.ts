@@ -45,6 +45,24 @@ export interface CleanBuildResult {
   deletedPath?: string
 }
 
+export interface BuildSettingsData {
+  buildScript: string
+  buildCommandParameters: string
+}
+
+export interface BuildSettingsResult {
+  success: boolean
+  message?: string
+  path?: string
+  error?: string
+}
+
+export interface LoadBuildSettingsResult {
+  success: boolean
+  settings?: BuildSettingsData
+  error?: string
+}
+
 declare global {
   interface Window {
     electron: ElectronAPI
@@ -73,6 +91,18 @@ declare global {
       // Build operation
       buildUnity: (unityProjectPath: string) => Promise<BuildResult>
       cleanBuildFolder: (unityProjectPath: string) => Promise<CleanBuildResult>
+
+      // Build settings management
+      saveBuildSettings: (settings: BuildSettingsData) => Promise<BuildSettingsResult>
+      loadBuildSettings: () => Promise<LoadBuildSettingsResult>
+      updateBuildScript: (
+        unityProjectPath: string,
+        buildScriptContent: string
+      ) => Promise<BuildSettingsResult>
+      buildUnityWithSettings: (
+        unityProjectPath: string,
+        buildCommand: string
+      ) => Promise<BuildResult>
 
       // Console logging
       onConsoleLog: (callback: (logData: ConsoleLogData) => void) => void

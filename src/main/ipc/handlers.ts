@@ -5,8 +5,6 @@ import { spawn, exec } from 'child_process'
 import { promisify } from 'util'
 import { STLLoader } from 'three-stdlib'
 import { BufferGeometry } from 'three'
-import * as dicomParser from 'dicom-parser'
-import { PNG } from 'pngjs'
 
 // Function to convert STL file to OBJ format
 const convertStlToObj = async (stlFilePath: string): Promise<string> => {
@@ -57,109 +55,8 @@ const convertStlToObj = async (stlFilePath: string): Promise<string> => {
   return objFilePath
 }
 
-// Function to convert DICOM file to PNG
-const convertDicomToPng = async (dicomFilePath: string): Promise<string> => {
-  try {
-    // Read DICOM file
-    const dicomData = await fs.readFile(dicomFilePath)
-
-    // Parse DICOM data
-    const dataSet = dicomParser.parseDicom(dicomData)
-
-    // Extract pixel data
-    const pixelDataElement = dataSet.elements.x7fe00010
-    if (!pixelDataElement) {
-      throw new Error('No pixel data found in DICOM file')
-    }
-
-    // Get image dimensions
-    const rows = dataSet.uint16('x00280010') || 512 // Default to 512 if not found
-    const columns = dataSet.uint16('x00280011') || 512 // Default to 512 if not found
-    const bitsAllocated = dataSet.uint16('x00280100') || 16
-
-    // Extract pixel data
-    let pixelData: Uint16Array | Uint8Array
-    if (bitsAllocated === 16) {
-      pixelData = new Uint16Array(
-        dicomData.buffer,
-        pixelDataElement.dataOffset,
-        pixelDataElement.length / 2
-      )
-    } else {
-      pixelData = new Uint8Array(
-        dicomData.buffer,
-        pixelDataElement.dataOffset,
-        pixelDataElement.length
-      )
-    }
-
-    // Create PNG
-    const png = new PNG({ width: columns, height: rows })
-
-    // Find min and max values for proper scaling
-    let minValue = Infinity
-    let maxValue = -Infinity
-
-    for (let i = 0; i < pixelData.length; i++) {
-      const value = pixelData[i]
-      if (value < minValue) minValue = value
-      if (value > maxValue) maxValue = value
-    }
-
-    const valueRange = maxValue - minValue
-
-    // Convert pixel data to PNG format (8-bit RGBA)
-    for (let y = 0; y < rows; y++) {
-      for (let x = 0; x < columns; x++) {
-        const idx = (rows * y + x) << 2
-        const pixelIdx = y * columns + x
-
-        let pixelValue: number
-        const rawValue = pixelData[pixelIdx] || 0
-
-        // Normalize to 0-255 range
-        if (valueRange > 0) {
-          pixelValue = Math.round(((rawValue - minValue) / valueRange) * 255)
-        } else {
-          pixelValue = 128 // Default gray if all values are the same
-        }
-
-        // Clamp to valid range
-        pixelValue = Math.max(0, Math.min(255, pixelValue))
-
-        // Set RGB values (grayscale)
-        png.data[idx] = pixelValue // Red
-        png.data[idx + 1] = pixelValue // Green
-        png.data[idx + 2] = pixelValue // Blue
-        png.data[idx + 3] = 255 // Alpha
-      }
-    }
-
-    // Create output file path - handle files with or without .dcm extension
-    let pngFilePath: string
-    if (dicomFilePath.toLowerCase().endsWith('.dcm')) {
-      pngFilePath = dicomFilePath.replace(/\.dcm$/i, '.png')
-    } else {
-      // For files without extension, just add .png
-      pngFilePath = dicomFilePath + '.png'
-    }
-
-    // Write PNG file
-    const buffer = PNG.sync.write(png)
-    await fs.writeFile(pngFilePath, buffer)
-
-    console.log(
-      `Converted DICOM to PNG: ${path.basename(dicomFilePath)} -> ${path.basename(pngFilePath)}`
-    )
-    return pngFilePath
-  } catch (error) {
-    console.error(`Failed to convert DICOM file ${dicomFilePath}:`, error)
-    throw error
-  }
-}
-
-// Helper function to copy only PNG files from DICOM folder
-async function copyPngFilesFromFolder(source: string, destination: string): Promise<void> {
+// Helper function to copy entire folder recursively
+async function copyFolderRecursively(source: string, destination: string): Promise<void> {
   await fs.mkdir(destination, { recursive: true })
 
   const entries = await fs.readdir(source, { withFileTypes: true })
@@ -169,14 +66,13 @@ async function copyPngFilesFromFolder(source: string, destination: string): Prom
     const destinationPath = path.join(destination, entry.name)
 
     if (entry.isDirectory()) {
-      // Recursively process subdirectories
-      await copyPngFilesFromFolder(sourcePath, destinationPath)
-    } else if (entry.name.toLowerCase().endsWith('.png')) {
-      // Only copy PNG files (converted DICOM files)
+      // Recursively copy subdirectories
+      await copyFolderRecursively(sourcePath, destinationPath)
+    } else {
+      // Copy all files
       await fs.copyFile(sourcePath, destinationPath)
-      console.log(`Copied PNG file: ${entry.name}`)
+      console.log(`Copied file: ${entry.name}`)
     }
-    // Skip .dcm files and other non-PNG files
   }
 }
 
@@ -254,91 +150,9 @@ export const setupIpcHandlers = (): void => {
     }
 
     const selectedFolder = result.filePaths[0]
+    console.log(`Selected DICOM folder: ${selectedFolder}`)
 
-    try {
-      // Find all files in the selected folder and check for DICOM files
-      const files = await fs.readdir(selectedFolder, { withFileTypes: true })
-      const dicomFiles: string[] = []
-
-      // First pass: Add .dcm extension to files without extensions
-      for (const file of files) {
-        if (file.isFile()) {
-          const filePath = path.join(selectedFolder, file.name)
-          const fileName = file.name.toLowerCase()
-
-          // Skip common non-DICOM files
-          const skipExtensions = ['.txt', '.md', '.readme', '.log', '.json', '.xml', '.png']
-          const shouldSkip =
-            skipExtensions.some((ext) => fileName.endsWith(ext)) ||
-            fileName === 'readme' ||
-            fileName === 'dicomdir' ||
-            fileName.startsWith('.')
-
-          if (!shouldSkip && !path.extname(file.name)) {
-            // File has no extension, add .dcm extension
-            const newFilePath = filePath + '.dcm'
-            try {
-              await fs.rename(filePath, newFilePath)
-              console.log(`Renamed file: ${file.name} -> ${file.name}.dcm`)
-            } catch (error) {
-              console.error(`Failed to rename ${file.name}:`, error)
-            }
-          }
-        }
-      }
-
-      // Second pass: Read directory again and process files with DICOM detection
-      const updatedFiles = await fs.readdir(selectedFolder, { withFileTypes: true })
-
-      for (const file of updatedFiles) {
-        if (file.isFile()) {
-          const filePath = path.join(selectedFolder, file.name)
-
-          // First check by extension (fast check)
-          if (file.name.toLowerCase().endsWith('.dcm')) {
-            dicomFiles.push(filePath)
-          } else {
-            // Check if file is DICOM by examining its content
-            try {
-              const fileBuffer = await fs.readFile(filePath)
-              // DICOM files start with a 128-byte preamble followed by "DICM" magic number
-              if (fileBuffer.length > 132) {
-                const dicmSignature = fileBuffer.subarray(128, 132).toString('ascii')
-                if (dicmSignature === 'DICM') {
-                  dicomFiles.push(filePath)
-                  console.log(`Detected DICOM file without .dcm extension: ${file.name}`)
-                }
-              }
-            } catch (error) {
-              // Skip files that can't be read
-              console.log(`Skipping file ${file.name}: ${error}`)
-            }
-          }
-        }
-      }
-
-      console.log(`Found ${dicomFiles.length} DICOM files to convert`)
-
-      // Convert each DICOM file to PNG
-      const convertedFiles: string[] = []
-      for (const dicomFile of dicomFiles) {
-        try {
-          const pngFile = await convertDicomToPng(dicomFile)
-          convertedFiles.push(pngFile)
-        } catch (error) {
-          console.error(`Failed to convert ${path.basename(dicomFile)}:`, error)
-          // Continue with other files even if one fails
-        }
-      }
-
-      console.log(
-        `Successfully converted ${convertedFiles.length} out of ${dicomFiles.length} DICOM files`
-      )
-      return selectedFolder
-    } catch (error) {
-      console.error('Error processing DICOM folder:', error)
-      return selectedFolder // Return the folder path even if conversion fails
-    }
+    return selectedFolder
   })
 
   // Check if BuildScript.cs exists in Unity project
@@ -455,6 +269,15 @@ export const setupIpcHandlers = (): void => {
             console.log('Creating folder:', buttonFolderName)
             const buttonFolderPath = path.join(modelsPath, buttonFolderName)
 
+            // Delete existing button folder if it exists, then create a new one
+            try {
+              await fs.rm(buttonFolderPath, { recursive: true, force: true })
+              console.log(`Cleared existing folder: ${buttonFolderName}`)
+            } catch {
+              // Folder might not exist, which is fine
+              console.log(`No existing folder to clear for: ${buttonFolderName}`)
+            }
+
             // Create button-specific folder
             await fs.mkdir(buttonFolderPath, { recursive: true })
 
@@ -480,22 +303,22 @@ export const setupIpcHandlers = (): void => {
           }
         }
 
-        // Copy DICOM folder if selected - but only PNG files
+        // Copy DICOM folder if selected - copy entire folder as-is
         if (selectedDicomFolder) {
           try {
             const folderName = path.basename(selectedDicomFolder)
             const destinationPath = path.join(dicomPath, folderName)
 
-            // Copy only PNG files from DICOM folder
-            await copyPngFilesFromFolder(selectedDicomFolder, destinationPath)
+            // Copy entire DICOM folder recursively
+            await copyFolderRecursively(selectedDicomFolder, destinationPath)
 
             results.push({
               success: true,
               destinationPath,
-              message: `Successfully copied PNG files from DICOM folder ${folderName}`
+              message: `Successfully copied DICOM folder ${folderName}`
             })
 
-            console.log(`Copied PNG files from DICOM folder: ${folderName} to ${destinationPath}`)
+            console.log(`Copied DICOM folder: ${folderName} to ${destinationPath}`)
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : 'Unknown error'
             results.push({
@@ -794,4 +617,287 @@ export const setupIpcHandlers = (): void => {
       }
     }
   })
+
+  // Build settings management
+  ipcMain.handle(
+    'save-build-settings',
+    async (_, settings: { buildScript: string; buildCommandParameters: string }) => {
+      try {
+        console.log('Saving build settings...')
+
+        // Create app data directory if it doesn't exist
+        const appDataPath = path.join(
+          process.env.APPDATA || process.env.HOME || '',
+          'holovision-preprocesser'
+        )
+        await fs.mkdir(appDataPath, { recursive: true })
+
+        const settingsPath = path.join(appDataPath, 'build-settings.json')
+        await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf8')
+
+        console.log(`Build settings saved to: ${settingsPath}`)
+        return {
+          success: true,
+          message: 'Build settings saved successfully',
+          path: settingsPath
+        }
+      } catch (error) {
+        console.error('Error saving build settings:', error)
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error saving build settings'
+        }
+      }
+    }
+  )
+
+  ipcMain.handle('load-build-settings', async () => {
+    try {
+      const appDataPath = path.join(
+        process.env.APPDATA || process.env.HOME || '',
+        'holovision-preprocesser'
+      )
+      const settingsPath = path.join(appDataPath, 'build-settings.json')
+
+      try {
+        const settingsData = await fs.readFile(settingsPath, 'utf8')
+        const settings = JSON.parse(settingsData)
+        console.log('Build settings loaded successfully')
+        return {
+          success: true,
+          settings: {
+            buildScript: settings.buildScript || '',
+            buildCommandParameters: settings.buildCommandParameters || ''
+          }
+        }
+      } catch {
+        // File doesn't exist or is invalid, return default settings
+        console.log('No existing build settings found, returning defaults')
+        return {
+          success: true,
+          settings: {
+            buildScript: `using UnityEngine;
+using UnityEditor;
+using UnityEditor.Build.Reporting;
+using System.IO;
+
+public class BuildScript
+{
+    [MenuItem("Build/Build for HoloLens 2")]
+    public static void BuildForHoloLens2()
+    {
+        BuildUWP();
+    }
+    
+    public static void BuildUWP()
+    {
+        string[] scenes = { "Assets/Scenes/MainScene.unity" };
+        string buildPath = "./Build/UWP";
+        
+        if (Directory.Exists(buildPath))
+            Directory.Delete(buildPath, true);
+        Directory.CreateDirectory(buildPath);
+        
+        BuildPlayerOptions options = new BuildPlayerOptions
+        {
+            scenes = scenes,
+            locationPathName = buildPath,
+            target = BuildTarget.WSAPlayer,
+            options = BuildOptions.None
+        };
+        
+        BuildReport report = BuildPipeline.BuildPlayer(options);
+        
+        if (report.summary.result == BuildResult.Succeeded)
+            Debug.Log("Build succeeded!");
+        else
+            Debug.LogError("Build failed!");
+    }
+}`,
+            buildCommandParameters: `-batchmode -quit -projectPath "PROJECT_PATH" -executeMethod BuildScript.BuildUWP -logFile "PROJECT_PATH/build.log"`
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error loading build settings:', error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error loading build settings'
+      }
+    }
+  })
+
+  ipcMain.handle(
+    'update-build-script',
+    async (_, unityProjectPath: string, buildScriptContent: string) => {
+      try {
+        console.log(`Updating build script for project: ${unityProjectPath}`)
+
+        // Ensure Editor directory exists
+        const editorPath = path.join(unityProjectPath, 'Assets', 'Editor')
+        await fs.mkdir(editorPath, { recursive: true })
+
+        // Write the build script
+        const buildScriptPath = path.join(editorPath, 'BuildScript.cs')
+        await fs.writeFile(buildScriptPath, buildScriptContent, 'utf8')
+
+        console.log(`Build script updated successfully: ${buildScriptPath}`)
+        return {
+          success: true,
+          path: buildScriptPath,
+          message: 'Build script updated successfully'
+        }
+      } catch (error) {
+        console.error('Error updating build script:', error)
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error updating build script'
+        }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'build-unity-with-settings',
+    async (_, unityProjectPath: string, buildCommand: string) => {
+      try {
+        console.log(`Starting custom Unity build for project: ${unityProjectPath}`)
+        console.log(`Build command: ${buildCommand}`)
+
+        // Replace PROJECT_PATH placeholder in command
+        const processedCommand = buildCommand.replace(/PROJECT_PATH/g, unityProjectPath)
+        console.log(`Processed command: ${processedCommand}`)
+
+        // Verify Unity project path exists
+        try {
+          await fs.access(unityProjectPath)
+        } catch {
+          return {
+            success: false,
+            error: 'Unity project path does not exist'
+          }
+        }
+
+        // Find Unity executable (reuse existing logic)
+        const unityHubPath =
+          process.platform === 'win32'
+            ? 'C:/Program Files/Unity/Hub/Unity Hub.exe'
+            : '/Applications/Unity Hub.app/Contents/MacOS/Unity Hub'
+        const specificUnityPath =
+          process.platform === 'win32'
+            ? 'C:/Program Files/Unity/Hub/Editor/2022.3.62f1/Editor/Unity.exe'
+            : '/Applications/Unity/Hub/Editor/2022.3.62f1/Unity.app/Contents/MacOS/Unity'
+
+        let unityExecutable = ''
+        let useUnityHub = false
+
+        // Check if Unity Hub is available
+        try {
+          await fs.access(unityHubPath)
+          await fs.access(specificUnityPath)
+          unityExecutable = unityHubPath
+          useUnityHub = true
+          console.log('Using Unity Hub')
+        } catch {
+          // Try direct Unity paths
+          const fallbackPaths =
+            process.platform === 'win32'
+              ? [
+                  'C:/Program Files/Unity/Editor/Unity.exe',
+                  'C:/Program Files (x86)/Unity/Editor/Unity.exe'
+                ]
+              : ['/Applications/Unity/Unity.app/Contents/MacOS/Unity']
+
+          for (const testPath of fallbackPaths) {
+            try {
+              await fs.access(testPath)
+              unityExecutable = testPath
+              console.log(`Using direct Unity executable: ${testPath}`)
+              break
+            } catch {
+              continue
+            }
+          }
+        }
+
+        if (!unityExecutable) {
+          return {
+            success: false,
+            error: 'Unity executable not found. Please ensure Unity is installed.'
+          }
+        }
+
+        // Parse command arguments
+        const args = processedCommand.split(' ').filter((arg) => arg.trim() !== '')
+
+        // Execute build command
+        return new Promise((resolve) => {
+          console.log(`Starting Unity process with args: ${args.join(' ')}`)
+
+          const unityProcess = spawn(unityExecutable, useUnityHub ? ['--', ...args] : args, {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            shell: process.platform === 'win32'
+          })
+
+          let stdout = ''
+          let stderr = ''
+
+          unityProcess.stdout?.on('data', (data) => {
+            stdout += data.toString()
+            console.log(`Unity stdout: ${data}`)
+          })
+
+          unityProcess.stderr?.on('data', (data) => {
+            stderr += data.toString()
+            console.log(`Unity stderr: ${data}`)
+          })
+
+          unityProcess.on('close', async (code) => {
+            console.log(`Unity build process exited with code: ${code}`)
+
+            // Read build log if it exists
+            let buildLog = ''
+            try {
+              const logPath = path.join(unityProjectPath, 'build.log')
+              buildLog = await fs.readFile(logPath, 'utf8')
+            } catch {
+              buildLog = 'Build log not available'
+            }
+
+            if (code === 0) {
+              resolve({
+                success: true,
+                message: 'Unity build completed successfully',
+                log: buildLog,
+                stdout,
+                stderr: stderr || undefined
+              })
+            } else {
+              resolve({
+                success: false,
+                error: `Unity build failed with exit code: ${code}`,
+                log: buildLog,
+                stdout,
+                stderr
+              })
+            }
+          })
+
+          unityProcess.on('error', (error) => {
+            console.error('Unity build process error:', error)
+            resolve({
+              success: false,
+              error: `Failed to start Unity build process: ${error.message}`
+            })
+          })
+        })
+      } catch (error) {
+        console.error('Error during custom Unity build:', error)
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error during build'
+        }
+      }
+    }
+  )
 }

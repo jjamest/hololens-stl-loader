@@ -56,6 +56,48 @@ const api = {
     deletedPath?: string
   }> => ipcRenderer.invoke('clean-build-folder', unityProjectPath),
 
+  // Build settings management
+  saveBuildSettings: (settings: {
+    buildScript: string
+    buildCommandParameters: string
+  }): Promise<{
+    success: boolean
+    message?: string
+    path?: string
+    error?: string
+  }> => ipcRenderer.invoke('save-build-settings', settings),
+
+  loadBuildSettings: (): Promise<{
+    success: boolean
+    settings?: {
+      buildScript: string
+      buildCommandParameters: string
+    }
+    error?: string
+  }> => ipcRenderer.invoke('load-build-settings'),
+
+  updateBuildScript: (
+    unityProjectPath: string,
+    buildScriptContent: string
+  ): Promise<{
+    success: boolean
+    path?: string
+    message?: string
+    error?: string
+  }> => ipcRenderer.invoke('update-build-script', unityProjectPath, buildScriptContent),
+
+  buildUnityWithSettings: (
+    unityProjectPath: string,
+    buildCommand: string
+  ): Promise<{
+    success: boolean
+    message?: string
+    error?: string
+    log?: string
+    stdout?: string
+    stderr?: string
+  }> => ipcRenderer.invoke('build-unity-with-settings', unityProjectPath, buildCommand),
+
   // Console logging
   onConsoleLog: (callback: (logData: ConsoleLogData) => void): void => {
     ipcRenderer.on('console-log', (_, logData) => callback(logData))
